@@ -389,8 +389,8 @@ Params: { userId: "uuid" }
 
 ---
 
-#### GET /health 🆕
-Endpoint público para health checks de load balancers, monitoreo, etc.
+#### GET /health 🆕 (Enhanced)
+Endpoint público para health checks de load balancers, monitoreo, etc. Muestra el estado de cada servicio y verifica que todos los endpoints estén registrados correctamente.
 
 **Request:**
 ```
@@ -401,11 +401,40 @@ GET /health
 ```json
 {
   "status": "ok",
-  "timestamp": "2026-01-29T10:30:00.000Z",
+  "timestamp": "2026-02-02T14:30:00.000Z",
   "service": "Login Magnetic Backend",
-  "uptime": 12345.67
+  "uptime": 12345.67,
+  "environment": "production",
+  "services": {
+    "database": { "status": "ok" },
+    "openai": { "status": "ok" },
+    "encryption": { "status": "ok" },
+    "jwt": { "status": "ok" }
+  },
+  "endpoints": {
+    "auth": { "status": "ok", "routes": ["POST /api/auth/login", "..."] },
+    "users": { "status": "ok", "routes": ["GET /api/users", "..."] },
+    "products": { "status": "ok", "routes": ["GET /api/products", "..."] },
+    "dashboard": { "status": "ok", "routes": ["POST /api/dashboard/connect/:userProductId", "..."] },
+    "ai": { "status": "ok", "routes": ["POST /api/ai/chat"] },
+    "health": { "status": "ok", "routes": ["GET /api/health"] }
+  }
 }
 ```
+
+**Servicios verificados:**
+| Servicio | Qué verifica |
+|----------|-------------|
+| `database` | Conexión a PostgreSQL (`SELECT 1`) |
+| `openai` | `OPENAI_API_KEY` configurada |
+| `encryption` | `CREDENTIALS_ENCRYPTION_KEY` válida (64 hex chars) |
+| `jwt` | `JWT_SECRET` no es el default |
+
+**Endpoints verificados por módulo:**
+- `auth` (11 endpoints), `users` (6), `products` (9), `dashboard` (4), `ai` (1), `health` (1)
+- Si un endpoint falta, aparece en `missing` con status `error`
+
+**Status posibles:** `ok` (todo funcional), `degraded` (algún servicio con problemas)
 
 **Guards:** Ninguno (público)
 
@@ -1369,46 +1398,76 @@ Ver [INICIO-RAPIDO.md](INICIO-RAPIDO.md) para más detalles.
 
 ### Backend (magnetic-backend)
 ```
-src/
-├── main.ts
-├── app.module.ts
-├── config/
-│   └── configuration.ts
-├── modules/
-│   ├── auth/
-│   │   ├── auth.module.ts
-│   │   ├── auth.controller.ts
-│   │   ├── auth.service.ts
-│   │   ├── strategies/
-│   │   │   └── jwt.strategy.ts
-│   │   ├── guards/
-│   │   │   └── jwt-auth.guard.ts
-│   │   └── dto/
-│   │       ├── login.dto.ts
-│   │       └── register.dto.ts
-│   ├── users/
-│   │   ├── users.module.ts
-│   │   ├── users.controller.ts
-│   │   ├── users.service.ts
-│   │   └── entities/
-│   │       └── user.entity.ts
-│   ├── products/
-│   │   ├── products.module.ts
-│   │   ├── products.controller.ts
-│   │   ├── products.service.ts
-│   │   └── entities/
-│   │       ├── product.entity.ts
-│   │       └── user-product.entity.ts
-│   └── sessions/
-│       ├── sessions.module.ts
-│       ├── sessions.service.ts
-│       └── entities/
-│           └── session.entity.ts
-└── common/
-    ├── decorators/
-    ├── filters/
-    ├── interceptors/
-    └── pipes/
+magnetic-backend/
+├── Dockerfile                    # ✅ Multi-stage build (Node 20)
+├── .dockerignore                 # ✅ Excluye node_modules, .env, etc.
+├── start.sh                      # ✅ Auto-seed + server start
+├── package.json
+├── package-lock.json             # ✅ Requerido para npm ci en Docker
+├── .env                          # Variables locales (no en git)
+├── .env.example                  # Template de variables
+├── src/
+│   ├── main.ts
+│   ├── app.module.ts
+│   ├── health.controller.ts      # ✅ Health check con verificación de servicios y endpoints
+│   ├── config/
+│   │   └── configuration.ts
+│   ├── modules/
+│   │   ├── auth/
+│   │   │   ├── auth.module.ts
+│   │   │   ├── auth.controller.ts
+│   │   │   ├── auth.service.ts
+│   │   │   ├── entities/
+│   │   │   │   └── password-reset-token.entity.ts
+│   │   │   ├── strategies/
+│   │   │   │   └── jwt.strategy.ts
+│   │   │   ├── guards/
+│   │   │   │   ├── jwt-auth.guard.ts
+│   │   │   │   └── admin.guard.ts
+│   │   │   └── dto/
+│   │   │       ├── login.dto.ts
+│   │   │       └── register.dto.ts
+│   │   ├── users/
+│   │   │   ├── users.module.ts
+│   │   │   ├── users.controller.ts
+│   │   │   ├── users.service.ts
+│   │   │   └── entities/
+│   │   │       └── user.entity.ts
+│   │   ├── products/
+│   │   │   ├── products.module.ts
+│   │   │   ├── products.controller.ts
+│   │   │   ├── products.service.ts
+│   │   │   └── entities/
+│   │   │       ├── product.entity.ts
+│   │   │       └── user-product.entity.ts
+│   │   ├── sessions/
+│   │   │   ├── sessions.module.ts
+│   │   │   ├── sessions.service.ts
+│   │   │   └── entities/
+│   │   │       └── session.entity.ts
+│   │   ├── ai/
+│   │   │   ├── ai.module.ts
+│   │   │   ├── ai.controller.ts
+│   │   │   ├── ai.service.ts
+│   │   │   └── dto/
+│   │   │       └── chat.dto.ts
+│   │   └── dashboard/
+│   │       ├── dashboard.module.ts
+│   │       ├── dashboard.controller.ts
+│   │       ├── dashboard.service.ts
+│   │       └── connectors/
+│   │           └── advocates.connector.ts
+│   ├── common/
+│   │   ├── services/
+│   │   │   └── encryption.service.ts
+│   │   ├── decorators/
+│   │   ├── filters/
+│   │   ├── interceptors/
+│   │   └── pipes/
+│   └── database/
+│       └── seeds/
+│           ├── setup-demo.ts
+│           └── setup-custom-users.ts
 ```
 
 ### Frontend (magnetic-frontend) 🔄 PENDIENTE
@@ -1649,58 +1708,112 @@ export interface SSOAccessResponse {
 
 ---
 
-## 🚀 Deploy en AWS
+## 🚀 Deploy en Railway (✅ CONFIGURADO)
 
-### Backend (Opción Recomendada: ECS + Fargate)
+### Arquitectura en Railway
 
-1. **Crear Dockerfile**
+```
+┌─────────────────────────────────────────┐
+│           Railway Project               │
+│                                         │
+│  ┌─────────────┐  ┌─────────────────┐  │
+│  │  PostgreSQL  │  │    Backend      │  │
+│  │  (Database)  │◀─│  (Dockerfile)   │  │
+│  │  railway DB  │  │  Node 20        │  │
+│  └─────────────┘  └─────────────────┘  │
+│                                         │
+│  ┌─────────────────────────────────┐   │
+│  │         Frontend                │   │
+│  │    (Vite + React)               │   │
+│  └─────────────────────────────────┘   │
+└─────────────────────────────────────────┘
+```
+
+### URLs de Producción
+| Servicio | URL |
+|----------|-----|
+| **Backend** | `https://magnetic-backend-production.up.railway.app/api` |
+| **Frontend** | `https://magnetic-frontend-production.up.railway.app` |
+| **Health Check** | `https://magnetic-backend-production.up.railway.app/api/health` |
+
+### Dockerfile (Backend)
 ```dockerfile
+# Build stage
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+# Production stage
 FROM node:20-alpine
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci --only=production
-COPY dist ./dist
-CMD ["node", "dist/main"]
+COPY --from=builder /app/dist ./dist
+COPY start.sh ./start.sh
+RUN chmod +x start.sh
+EXPOSE ${PORT:-3000}
+CMD ["./start.sh"]
 ```
 
-2. **RDS PostgreSQL**
-   - Crear instancia RDS PostgreSQL
-   - Guardar endpoint en variables de entorno
-
-3. **ECS Task Definition**
-   - Definir contenedor con imagen Docker
-   - Variables de entorno desde Secrets Manager
-
-4. **Application Load Balancer**
-   - Health check en `/api/auth/me` (requiere auth, cambiar a health endpoint)
-   - SSL/TLS certificate
-
-### Frontend (Opción: S3 + CloudFront)
-
-1. **Build de producción**
+### start.sh (Auto-seed + Server)
 ```bash
-npm run build
+#!/bin/sh
+# Run seeds (idempotent - skips if data already exists)
+echo "Running seeds..."
+node dist/database/seeds/setup-demo.js || echo "Seeds failed, continuing..."
+
+# Start the app
+echo "Starting server..."
+node dist/main
 ```
 
-2. **S3 Bucket**
-   - Subir archivos del build
-   - Configurar como static website
+### Variables de Entorno en Railway (Backend)
 
-3. **CloudFront**
-   - Distribución CDN
-   - Certificado SSL
-   - Configurar dominio personalizado
+```env
+# Database (usar valores del TCP Proxy de Railway PostgreSQL)
+DATABASE_HOST=turntable.proxy.rlwy.net    # Tu host real
+DATABASE_PORT=46474                        # Tu puerto real
+DATABASE_USER=postgres
+DATABASE_PASSWORD=<password-de-railway>
+DATABASE_NAME=railway
 
----
+# JWT
+JWT_SECRET=<generar-secret-seguro>
+JWT_REFRESH_SECRET=<generar-otro-secret>
+JWT_EXPIRES_IN=15m
+JWT_REFRESH_EXPIRES_IN=7d
 
-## 📞 Contacto y Siguiente Fase
+# CORS (⚠️ IMPORTANTE: usar https://, NO http://)
+CORS_ORIGIN=https://magnetic-frontend-production.up.railway.app
 
-**Backend completado:** ✅ 100%
-**Frontend pendiente:** 🔄 0%
+# Encryption
+CREDENTIALS_ENCRYPTION_KEY=<openssl rand -hex 32>
 
-El backend está listo para ser consumido por el frontend. Todos los endpoints están documentados y funcionando.
+# OpenAI
+OPENAI_API_KEY=<tu-api-key>
+OPENAI_MODEL=gpt-4o-mini
+OPENAI_MAX_TOKENS=500
 
-**Próximo paso:** Crear el proyecto de frontend en React + TypeScript.
+# Environment
+NODE_ENV=production
+```
+
+### Variables de Entorno en Railway (Frontend)
+
+```env
+VITE_API_URL=https://magnetic-backend-production.up.railway.app/api
+```
+
+### Notas Importantes del Deploy
+
+1. **CORS con HTTPS**: Railway sirve todo con HTTPS. La variable `CORS_ORIGIN` DEBE usar `https://` (no `http://`), de lo contrario el preflight OPTIONS falla.
+2. **PostgreSQL TCP Proxy**: Usar los valores públicos del TCP Proxy (no `postgres.railway.internal` que solo funciona en red privada). Ir a PostgreSQL → Networking para obtener host y puerto.
+3. **Seeds automáticos**: El `start.sh` ejecuta seeds antes de iniciar el servidor. Si fallan (ej: datos ya existen), continúa con el inicio normal.
+4. **package-lock.json**: Debe estar en el repo (no en `.gitignore`) para que `npm ci` funcione en Docker.
+5. **Health Check**: Usar `GET /api/health` para verificar que todos los servicios estén funcionando.
 
 
 ---
@@ -1792,40 +1905,20 @@ export interface UserProduct {
 
 ---
 
-## 🚀 Deploy en AWS
+## 🚀 Deploy
 
-### Backend: ECS + Fargate + RDS
-
-1. **RDS PostgreSQL**
-   - Crear instancia RDS
-   - Guardar endpoint en variables de entorno
-
-2. **Docker Image**
-   - Crear Dockerfile
-   - Push a ECR (Elastic Container Registry)
-
-3. **ECS Service**
-   - Task Definition con variables de entorno
-   - Application Load Balancer
-   - SSL/TLS certificate
-
-### Frontend: S3 + CloudFront
-
-1. Build de producción → S3 Bucket
-2. CloudFront distribution
-3. Dominio personalizado con Route 53
+Deploy en Railway. Ver sección "Deploy en Railway" más arriba para detalles completos.
 
 ---
 
 ## 📞 Estado Actual
 
 **Backend:** ✅ 100% completado y funcional
-**Frontend:** 🔄 Pendiente
+**Frontend:** ✅ 100% MVP completado
+**Deploy:** ✅ Railway configurado (Backend + Frontend + PostgreSQL)
 
 Todos los endpoints están documentados y probados.
-El backend está listo para ser consumido por el frontend.
-
-**Siguiente paso:** Crear proyecto React + TypeScript.
+Health check disponible en `GET /api/health` con verificación de servicios y endpoints.
 
 
 ---
@@ -2082,8 +2175,13 @@ VITE_API_URL=http://localhost:3000/api
 | E2E - Admin Panel (CRUD, acceso) | ✅ 8 tests | 100% |
 | E2E - Profile & Change Password | ✅ 8 tests | 100% |
 | E2E - Forgot Password & Register | ✅ 9 tests | 100% |
+| Deploy Railway - Backend | ✅ Completo | 100% |
+| Deploy Railway - Frontend | ✅ Completo | 100% |
+| Deploy Railway - PostgreSQL | ✅ Completo | 100% |
+| Health Check (enhanced, per-service) | ✅ Completo | 100% |
+| Dockerfile + start.sh (auto-seed) | ✅ Completo | 100% |
 
-**MVP Funcional:** ✅ **LISTO PARA USAR** (con limitaciones de registro backend)
+**MVP Funcional:** ✅ **LISTO PARA USAR Y DEPLOYADO EN RAILWAY**
 
 
 ---
@@ -2746,9 +2844,9 @@ npm run test:e2e         # Ejecuta tests E2E
 - [NestJS](https://nestjs.com/) - Framework backend
 
 ### Estado Actualizado
-**Última actualización:** Enero 2026
+**Última actualización:** Febrero 2026
 **Versión Frontend:** v1.4.0 (MVP + AI + Métricas + FAQ + Design System + E2E Testing)
-**Versión Backend:** v1.1.0 (Completo con AI + Auth + Conexión Productos)
+**Versión Backend:** v1.2.0 (Completo con AI + Auth + Conexión Productos + Deploy Railway + Health Check Enhanced)
 
 ---
 
