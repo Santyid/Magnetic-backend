@@ -37,4 +37,12 @@ export default () => ({
     model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
     maxTokens: parseInt(process.env.OPENAI_MAX_TOKENS, 10) || 500,
   },
+  meta: {
+    appId: process.env.META_APP_ID,
+    appSecret: process.env.META_APP_SECRET,
+    accessToken: process.env.META_ACCESS_TOKEN,
+    igBusinessAccountId: process.env.META_IG_BUSINESS_ACCOUNT_ID,
+    pageId: process.env.META_PAGE_ID,
+    graphApiVersion: process.env.META_GRAPH_API_VERSION || 'v24.0',
+  },
 });

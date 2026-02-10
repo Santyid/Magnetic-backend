@@ -8,6 +8,7 @@ import { ProductsModule } from './modules/products/products.module';
 import { SessionsModule } from './modules/sessions/sessions.module';
 import { AiModule } from './modules/ai/ai.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
+import { CreatorsModule } from './modules/creators/creators.module';
 import { HealthController } from './health.controller';
 import { User } from './modules/users/entities/user.entity';
 import { Product } from './modules/products/entities/product.entity';
@@ -42,6 +43,7 @@ import { PasswordResetToken } from './modules/auth/entities/password-reset-token
     SessionsModule,
     AiModule,
     DashboardModule,
+    CreatorsModule,
   ],
   controllers: [HealthController],
 })

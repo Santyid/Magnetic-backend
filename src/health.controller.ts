@@ -16,6 +16,7 @@ export class HealthController {
     const services = {
       database: await this.checkDatabase(),
       openai: this.checkOpenAI(),
+      meta: this.checkMeta(),
       encryption: this.checkEncryption(),
       jwt: this.checkJWT(),
     };
@@ -64,6 +65,18 @@ export class HealthController {
     }
     if (key.length !== 64) {
       return { status: 'error', message: 'Key must be 64 hex characters' };
+    }
+    return { status: 'ok' };
+  }
+
+  private checkMeta(): { status: string; message?: string } {
+    const accessToken = this.configService.get('meta.accessToken');
+    if (!accessToken) {
+      return { status: 'not_configured', message: 'META_ACCESS_TOKEN not set' };
+    }
+    const pageId = this.configService.get('meta.pageId');
+    if (!pageId) {
+      return { status: 'warning', message: 'META_PAGE_ID not configured' };
     }
     return { status: 'ok' };
   }
@@ -134,6 +147,10 @@ export class HealthController {
       ],
       ai: [
         'POST /api/ai/chat',
+      ],
+      creators: [
+        'GET /api/creators/search',
+        'GET /api/creators/:creatorId',
       ],
       health: [
         'GET /api/health',
