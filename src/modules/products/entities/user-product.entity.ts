@@ -5,18 +5,22 @@ import {
   CreateDateColumn,
   ManyToOne,
   JoinColumn,
+  Index,
 } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
 import { Product } from './product.entity';
 
 @Entity('user_products')
+@Index(['userId', 'productId'], { unique: true })
 export class UserProduct {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
+  @Index()
   @Column({ name: 'user_id' })
   userId: string;
 
+  @Index()
   @Column({ name: 'product_id' })
   productId: string;
 

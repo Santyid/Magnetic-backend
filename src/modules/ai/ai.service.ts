@@ -25,15 +25,12 @@ export class AiService {
     const apiKey = this.configService.get<string>('openai.apiKey');
 
     if (!apiKey) {
-      console.error('⚠️  OPENAI_API_KEY no configurada en variables de entorno');
       throw new Error('OpenAI API key is required');
     }
 
     this.openai = new OpenAI({
       apiKey: apiKey,
     });
-
-    console.log('✅ OpenAI client initialized successfully');
   }
 
   /**
@@ -85,7 +82,7 @@ export class AiService {
     // Obtener usuario
     const user = await this.usersService.findOne(userId);
     if (!user) {
-      throw new UnauthorizedException('Usuario no encontrado');
+      throw new UnauthorizedException('USER_NOT_FOUND');
     }
 
     // Obtener productos del usuario
@@ -169,8 +166,6 @@ Información de los productos:
         },
       };
     } catch (error) {
-      console.error('Error en AI service:', error);
-
       if (error instanceof HttpException) {
         throw error;
       }
@@ -179,7 +174,6 @@ Información de los productos:
         {
           statusCode: 500,
           message: 'AI_ERROR',
-          error: error.message || 'Error al procesar tu mensaje',
         },
         HttpStatus.INTERNAL_SERVER_ERROR,
       );

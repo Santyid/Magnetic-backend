@@ -1,5 +1,6 @@
 import { Injectable, Logger, HttpException, HttpStatus } from '@nestjs/common';
 import { MetaConnector } from './connectors/meta.connector';
+import { TikTokConnector } from './connectors/tiktok.connector';
 import { SearchCreatorsDto } from './dto/search-creators.dto';
 import type {
   CreatorProfile,
@@ -26,7 +27,10 @@ export class CreatorsService {
   private readonly RATE_LIMIT_WINDOW = 60 * 60 * 1000; // 1 hour in ms
   private readonly CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
-  constructor(private metaConnector: MetaConnector) {}
+  constructor(
+    private metaConnector: MetaConnector,
+    private tiktokConnector: TikTokConnector,
+  ) {}
 
   private checkRateLimit(userId: string): void {
     const now = new Date();
@@ -82,12 +86,22 @@ export class CreatorsService {
     }
 
     try {
-      const result = await this.metaConnector.searchCreators(
-        params.q,
-        platform,
-        limit,
-        params.cursor,
-      );
+      let result: CreatorSearchResult;
+
+      if (platform === 'tiktok') {
+        result = await this.tiktokConnector.searchCreators(
+          params.q,
+          limit,
+          params.cursor,
+        );
+      } else {
+        result = await this.metaConnector.searchCreators(
+          params.q,
+          platform,
+          limit,
+          params.cursor,
+        );
+      }
 
       // Cache result
       this.searchCache.set(cacheKey, {
@@ -103,10 +117,13 @@ export class CreatorsService {
         throw error;
       }
 
+      const errorCode =
+        platform === 'tiktok' ? 'TIKTOK_API_ERROR' : 'META_API_ERROR';
+
       throw new HttpException(
         {
           statusCode: 502,
-          message: 'META_API_ERROR',
+          message: errorCode,
           error: error.message,
         },
         HttpStatus.BAD_GATEWAY,
@@ -116,7 +133,7 @@ export class CreatorsService {
 
   async getCreatorProfile(
     creatorId: string,
-    platform: 'facebook' | 'instagram' = 'facebook',
+    platform: 'facebook' | 'instagram' | 'tiktok' = 'facebook',
   ): Promise<CreatorProfile> {
     const cacheKey = `profile:${platform}:${creatorId}`;
 
@@ -126,7 +143,16 @@ export class CreatorsService {
     }
 
     try {
-      const profile = await this.metaConnector.getCreatorProfile(creatorId, platform);
+      let profile: CreatorProfile;
+
+      if (platform === 'tiktok') {
+        profile = await this.tiktokConnector.getCreatorProfile(creatorId);
+      } else {
+        profile = await this.metaConnector.getCreatorProfile(
+          creatorId,
+          platform,
+        );
+      }
 
       this.profileCache.set(cacheKey, {
         data: profile,
@@ -143,10 +169,13 @@ export class CreatorsService {
         throw error;
       }
 
+      const errorCode =
+        platform === 'tiktok' ? 'TIKTOK_API_ERROR' : 'META_API_ERROR';
+
       throw new HttpException(
         {
           statusCode: 502,
-          message: 'META_API_ERROR',
+          message: errorCode,
           error: error.message,
         },
         HttpStatus.BAD_GATEWAY,

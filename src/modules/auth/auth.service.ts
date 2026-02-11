@@ -40,11 +40,11 @@ export class AuthService {
     const user = await this.usersService.findByEmail(loginDto.email);
 
     if (!user) {
-      throw new UnauthorizedException('Credenciales inválidas');
+      throw new UnauthorizedException('INVALID_CREDENTIALS');
     }
 
     if (!user.isActive) {
-      throw new UnauthorizedException('Usuario inactivo');
+      throw new UnauthorizedException('INACTIVE_USER');
     }
 
     const isPasswordValid = await this.usersService.validatePassword(
@@ -53,7 +53,7 @@ export class AuthService {
     );
 
     if (!isPasswordValid) {
-      throw new UnauthorizedException('Credenciales inválidas');
+      throw new UnauthorizedException('INVALID_CREDENTIALS');
     }
 
     const payload = {
@@ -104,13 +104,13 @@ export class AuthService {
       );
 
       if (!session) {
-        throw new UnauthorizedException('Sesión inválida');
+        throw new UnauthorizedException('INVALID_SESSION');
       }
 
       const user = await this.usersService.findOne(payload.sub);
 
       if (!user || !user.isActive) {
-        throw new UnauthorizedException('Usuario no autorizado');
+        throw new UnauthorizedException('UNAUTHORIZED_USER');
       }
 
       const newPayload = {
@@ -148,13 +148,13 @@ export class AuthService {
         refreshToken: newRefreshToken,
       };
     } catch (error) {
-      throw new UnauthorizedException('Token inválido o expirado');
+      throw new UnauthorizedException('INVALID_TOKEN');
     }
   }
 
   async logout(refreshToken: string) {
     await this.sessionsService.deleteByRefreshToken(refreshToken);
-    return { message: 'Sesión cerrada exitosamente' };
+    return { message: 'SESSION_CLOSED' };
   }
 
   async me(userId: string) {
@@ -176,12 +176,12 @@ export class AuthService {
     );
 
     if (!isPasswordValid) {
-      throw new UnauthorizedException('La contraseña actual es incorrecta');
+      throw new UnauthorizedException('CURRENT_PASSWORD_INVALID');
     }
 
     await this.usersService.update(userId, { password: newPassword });
 
-    return { message: 'Contraseña actualizada exitosamente' };
+    return { message: 'PASSWORD_UPDATED' };
   }
 
   async getUserSessions(userId: string) {
@@ -190,7 +190,7 @@ export class AuthService {
 
   async logoutAll(userId: string, currentRefreshToken: string) {
     await this.sessionsService.deleteAllUserSessions(userId);
-    return { message: 'Todas las sesiones han sido cerradas' };
+    return { message: 'ALL_SESSIONS_CLOSED' };
   }
 
   async deleteSession(sessionId: string, userId: string) {
@@ -198,11 +198,11 @@ export class AuthService {
     const userSession = session.find((s) => s.id === sessionId);
 
     if (!userSession) {
-      throw new UnauthorizedException('Sesión no encontrada');
+      throw new UnauthorizedException('SESSION_NOT_FOUND');
     }
 
     await this.sessionsService.deleteByRefreshToken(userSession.refreshToken);
-    return { message: 'Sesión cerrada exitosamente' };
+    return { message: 'SESSION_CLOSED' };
   }
 
   async forgotPassword(email: string) {
@@ -212,7 +212,7 @@ export class AuthService {
       // Por seguridad, no revelamos si el email existe o no
       return {
         message:
-          'Si el email existe, recibirás un link para resetear tu contraseña',
+          'RESET_EMAIL_SENT',
       };
     }
 
@@ -236,18 +236,14 @@ export class AuthService {
       used: false,
     });
 
-    // TODO: Enviar email con el link
-    // Por ahora, solo logueamos el token (en producción esto sería un email)
-    console.log(
-      `🔐 Password reset token para ${email}: ${token}`,
-    );
-    console.log(
-      `Link de reseteo: ${this.configService.get('frontendUrl')}/reset-password?token=${token}`,
-    );
+    // TODO: Enviar email con el link de reseteo
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(`[DEV] Reset link: ${this.configService.get('frontendUrl')}/reset-password?token=${token}`);
+    }
 
     return {
       message:
-        'Si el email existe, recibirás un link para resetear tu contraseña',
+        'RESET_EMAIL_SENT',
     };
   }
 
@@ -258,12 +254,12 @@ export class AuthService {
     });
 
     if (!resetToken) {
-      throw new BadRequestException('Token inválido o expirado');
+      throw new BadRequestException('RESET_TOKEN_INVALID');
     }
 
     // Verificar si el token expiró
     if (new Date() > resetToken.expiresAt) {
-      throw new BadRequestException('Token expirado');
+      throw new BadRequestException('RESET_TOKEN_EXPIRED');
     }
 
     // Actualizar contraseña
@@ -276,6 +272,6 @@ export class AuthService {
     // Cerrar todas las sesiones del usuario por seguridad
     await this.sessionsService.deleteAllUserSessions(resetToken.userId);
 
-    return { message: 'Contraseña actualizada exitosamente' };
+    return { message: 'PASSWORD_UPDATED' };
   }
 }

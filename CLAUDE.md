@@ -111,3 +111,31 @@ Dockerfile multi-stage con auto-seed via `start.sh`. Ver [../docs/deploy-railway
 - Error codes: `throw new BadRequestException('UPPER_SNAKE_CODE')` (i18n-friendly)
 - Encryption: `EncryptionService.encrypt()` / `.decrypt()` para credenciales
 - Health check: Actualizar `health.controller.ts` al agregar endpoints
+
+## Shared Resources (workspace root .claude/)
+
+### Rules relevantes para backend
+| Rule | Tema |
+|------|------|
+| [architecture](../.claude/rules/architecture.md) | Constraints, modules, dependencies |
+| [api-conventions](../.claude/rules/api-conventions.md) | Prefix, guards, DTOs, error codes |
+| [security](../.claude/rules/security.md) | JWT, encryption, CORS, rate limiting |
+| [naming-conventions](../.claude/rules/naming-conventions.md) | Entities, DTOs, endpoints |
+| [error-handling](../.claude/rules/error-handling.md) | Exceptions, error codes |
+| [performance](../.claude/rules/performance.md) | Queries, caching, N+1 prevention |
+| [testing](../.claude/rules/testing.md) | Jest patterns, mocking |
+| [env-variables](../.claude/rules/env-variables.md) | Como agregar/documentar env vars |
+| [git-workflow](../.claude/rules/git-workflow.md) | Branches, commits |
+
+### Prompts utiles para backend
+| Tarea | Prompt |
+|-------|--------|
+| Nuevo endpoint | [new-endpoint](../.claude/prompts/new-endpoint.md) |
+| Nuevo modulo | [new-module](../.claude/prompts/new-module.md) |
+| Nuevo conector | [new-connector](../.claude/prompts/new-connector.md) |
+| Cambio de BD | [migration](../.claude/prompts/migration.md) |
+| Escribir tests | [write-tests](../.claude/prompts/write-tests.md) |
+| Code review | [code-review](../.claude/prompts/code-review.md) |
+| Debug | [debug](../.claude/prompts/debug.md) |
+
+### Skills: `/health` `/seed` `/deploy` `/test` `/lint` `/db` `/status`

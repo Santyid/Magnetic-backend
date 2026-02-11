@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { ThrottlerModule } from '@nestjs/throttler';
 import configuration from './config/configuration';
 import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
@@ -32,11 +33,15 @@ import { PasswordResetToken } from './modules/auth/entities/password-reset-token
         password: configService.get('database.password'),
         database: configService.get('database.database'),
         entities: [User, Product, UserProduct, Session, PasswordResetToken],
-        synchronize: true, // ¡Solo en desarrollo! Cambiar a false en producción
+        synchronize: process.env.NODE_ENV !== 'production',
         logging: process.env.NODE_ENV === 'development',
       }),
       inject: [ConfigService],
     }),
+    ThrottlerModule.forRoot([{
+      ttl: 60000,
+      limit: 10,
+    }]),
     AuthModule,
     UsersModule,
     ProductsModule,

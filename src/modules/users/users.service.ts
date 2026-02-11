@@ -23,7 +23,7 @@ export class UsersService {
   async create(createUserDto: CreateUserDto): Promise<User> {
     const existingUser = await this.findByEmail(createUserDto.email);
     if (existingUser) {
-      throw new ConflictException('El email ya está registrado');
+      throw new ConflictException('EMAIL_ALREADY_EXISTS');
     }
 
     const hashedPassword = await bcrypt.hash(createUserDto.password, 10);
@@ -49,7 +49,7 @@ export class UsersService {
     });
 
     if (!user) {
-      throw new NotFoundException('Usuario no encontrado');
+      throw new NotFoundException('USER_NOT_FOUND');
     }
 
     return user;
@@ -68,7 +68,7 @@ export class UsersService {
     if (updateUserDto.email && updateUserDto.email !== user.email) {
       const existingUser = await this.findByEmail(updateUserDto.email);
       if (existingUser) {
-        throw new ConflictException('El email ya está registrado');
+        throw new ConflictException('EMAIL_ALREADY_EXISTS');
       }
     }
 

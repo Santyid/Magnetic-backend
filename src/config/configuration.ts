@@ -45,4 +45,10 @@ export default () => ({
     pageId: process.env.META_PAGE_ID,
     graphApiVersion: process.env.META_GRAPH_API_VERSION || 'v24.0',
   },
+  tiktok: {
+    appId: process.env.TIKTOK_APP_ID,
+    appSecret: process.env.TIKTOK_APP_SECRET,
+    accessToken: process.env.TIKTOK_ACCESS_TOKEN,
+    advertiserId: process.env.TIKTOK_ADVERTISER_ID,
+  },
 });

@@ -32,9 +32,7 @@ export class ProductsService {
     });
 
     if (existingProduct) {
-      throw new ConflictException(
-        'Ya existe un producto con ese nombre o slug',
-      );
+      throw new ConflictException('PRODUCT_ALREADY_EXISTS');
     }
 
     const product = this.productsRepository.create(createProductDto);
@@ -53,7 +51,7 @@ export class ProductsService {
     });
 
     if (!product) {
-      throw new NotFoundException('Producto no encontrado');
+      throw new NotFoundException('PRODUCT_NOT_FOUND');
     }
 
     return product;
@@ -65,7 +63,7 @@ export class ProductsService {
     });
 
     if (!product) {
-      throw new NotFoundException('Producto no encontrado');
+      throw new NotFoundException('PRODUCT_NOT_FOUND');
     }
 
     return product;
@@ -92,7 +90,7 @@ export class ProductsService {
     });
 
     if (existingAssignment) {
-      throw new ConflictException('El producto ya está asignado al usuario');
+      throw new ConflictException('PRODUCT_ALREADY_ASSIGNED');
     }
 
     const userProduct = this.userProductsRepository.create({
@@ -112,7 +110,7 @@ export class ProductsService {
     });
 
     if (!userProduct) {
-      throw new NotFoundException('Asignación no encontrada');
+      throw new NotFoundException('ASSIGNMENT_NOT_FOUND');
     }
 
     await this.userProductsRepository.remove(userProduct);
@@ -133,7 +131,7 @@ export class ProductsService {
     });
 
     if (!userProduct) {
-      throw new NotFoundException('Asignación no encontrada');
+      throw new NotFoundException('ASSIGNMENT_NOT_FOUND');
     }
 
     Object.assign(userProduct, updateData);
@@ -150,7 +148,7 @@ export class ProductsService {
     });
 
     if (!userProduct) {
-      throw new NotFoundException('Asignación no encontrada');
+      throw new NotFoundException('ASSIGNMENT_NOT_FOUND');
     }
 
     if (dto.productEmail !== undefined) {
@@ -181,7 +179,7 @@ export class ProductsService {
     });
 
     if (!userProduct) {
-      throw new NotFoundException('Asignación no encontrada');
+      throw new NotFoundException('ASSIGNMENT_NOT_FOUND');
     }
 
     userProduct.productEmail = null;
@@ -224,9 +222,7 @@ export class ProductsService {
     });
 
     if (!userProduct) {
-      throw new NotFoundException(
-        'No tienes acceso a este producto o no está activo',
-      );
+      throw new NotFoundException('PRODUCT_ACCESS_DENIED');
     }
 
     const payload = {

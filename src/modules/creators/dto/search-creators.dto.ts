@@ -6,8 +6,8 @@ export class SearchCreatorsDto {
   q: string;
 
   @IsOptional()
-  @IsIn(['facebook', 'instagram'])
-  platform?: 'facebook' | 'instagram' = 'facebook';
+  @IsIn(['facebook', 'instagram', 'tiktok'])
+  platform?: 'facebook' | 'instagram' | 'tiktok' = 'facebook';
 
   @IsOptional()
   @Transform(({ value }) => parseInt(value, 10))

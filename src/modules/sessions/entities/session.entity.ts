@@ -5,6 +5,7 @@ import {
   CreateDateColumn,
   ManyToOne,
   JoinColumn,
+  Index,
 } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
 
@@ -13,13 +14,14 @@ export class Session {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
+  @Index()
   @Column({ name: 'user_id' })
   userId: string;
 
-  @Column()
+  @Column({ unique: true })
   token: string;
 
-  @Column({ name: 'refresh_token' })
+  @Column({ name: 'refresh_token', unique: true })
   refreshToken: string;
 
   @Column({ name: 'expires_at' })
