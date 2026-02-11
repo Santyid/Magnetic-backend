@@ -16,6 +16,17 @@ export class TikTokConnector {
   private readonly advertiserId: string;
   private readonly tcmAccountId: string;
 
+  /**
+   * TikTok requires country_codes within the same region.
+   * Searches run in parallel across all regions and results are merged.
+   */
+  private readonly regions: string[][] = [
+    ['US'],
+    ['CA'],
+    ['CO', 'MX', 'AR', 'BR', 'CL', 'PE'],
+    ['ES', 'FR', 'DE', 'IT', 'GB', 'NL', 'PL', 'SE'],
+  ];
+
   constructor(private configService: ConfigService) {
     this.accessToken =
       this.configService.get<string>('tiktok.accessToken') || '';
@@ -27,9 +38,8 @@ export class TikTokConnector {
   }
 
   /**
-   * Search creators using the TikTok Creator Marketplace Discovery API.
-   * Requires a Business API token and TikTok One account ID.
-   * Endpoint: GET /tto/tcm/creator/discover/
+   * Search creators across all TikTok regions in parallel.
+   * Merges results and sorts by followers count descending.
    */
   async searchCreators(
     query: string,
@@ -37,55 +47,45 @@ export class TikTokConnector {
     cursor?: string,
   ): Promise<CreatorSearchResult> {
     try {
-      const params: Record<string, any> = {
-        tto_tcm_account_id: this.tcmAccountId,
-        search_keyword: query,
-        page_size: limit,
-        country_codes: JSON.stringify(['US']),
-      };
+      const perRegionLimit = Math.max(Math.ceil(limit / this.regions.length), 5);
+      const page = cursor ? parseInt(cursor, 10) || 1 : undefined;
 
-      if (cursor) {
-        params.page = parseInt(cursor, 10) || 1;
-      }
-
-      const response = await axios.get(
-        `${this.businessApiUrl}/tto/tcm/creator/discover/`,
-        {
-          headers: {
-            'Access-Token': this.accessToken,
-          },
-          params,
-        },
+      const regionResults = await Promise.allSettled(
+        this.regions.map((codes) =>
+          this.searchRegion(query, perRegionLimit, codes, page),
+        ),
       );
 
-      const data = response.data;
+      const allCreators: CreatorSummary[] = [];
+      let totalCount = 0;
+      let anyHasNextPage = false;
+      const seen = new Set<string>();
 
-      if (data.code !== 0) {
-        this.logger.error(
-          `TikTok TTCM API error: ${data.message} (code: ${data.code})`,
-        );
-        throw new Error(
-          `TIKTOK_SEARCH_FAILED: ${data.message || 'Unknown error'} (code: ${data.code})`,
-        );
+      for (const result of regionResults) {
+        if (result.status !== 'fulfilled') continue;
+        const { creators, total, hasNextPage } = result.value;
+        totalCount += total;
+        if (hasNextPage) anyHasNextPage = true;
+        for (const creator of creators) {
+          if (!seen.has(creator.id)) {
+            seen.add(creator.id);
+            allCreators.push(creator);
+          }
+        }
       }
 
-      const creatorList = data.data?.creators || data.data?.creator_list || [];
-      const creators: CreatorSummary[] = creatorList.map((raw: any) =>
-        this.mapToCreatorSummary(raw),
-      );
-
-      const pageInfo = data.data?.page_info || {};
-      const currentPage = pageInfo.page || 1;
-      const totalCount = pageInfo.total_number || 0;
-      const hasNextPage = currentPage * limit < totalCount;
+      // Sort by followers descending and take the requested limit
+      allCreators.sort((a, b) => b.followersCount - a.followersCount);
+      const trimmed = allCreators.slice(0, limit);
+      const currentPage = page || 1;
 
       return {
-        creators,
+        creators: trimmed,
         paging: {
-          cursors: hasNextPage
+          cursors: anyHasNextPage
             ? { after: String(currentPage + 1) }
             : undefined,
-          hasNextPage,
+          hasNextPage: anyHasNextPage,
         },
         totalCount,
       };
@@ -99,6 +99,59 @@ export class TikTokConnector {
       );
       throw new Error('TIKTOK_SEARCH_FAILED');
     }
+  }
+
+  private async searchRegion(
+    query: string,
+    limit: number,
+    countryCodes: string[],
+    page?: number,
+  ): Promise<{
+    creators: CreatorSummary[];
+    total: number;
+    hasNextPage: boolean;
+  }> {
+    const params: Record<string, any> = {
+      tto_tcm_account_id: this.tcmAccountId,
+      search_keyword: query,
+      page_size: limit,
+      country_codes: JSON.stringify(countryCodes),
+    };
+
+    if (page) {
+      params.page = page;
+    }
+
+    const response = await axios.get(
+      `${this.businessApiUrl}/tto/tcm/creator/discover/`,
+      {
+        headers: { 'Access-Token': this.accessToken },
+        params,
+      },
+    );
+
+    const data = response.data;
+    if (data.code !== 0) {
+      this.logger.warn(
+        `TikTok region ${countryCodes[0]} search error: ${data.message}`,
+      );
+      return { creators: [], total: 0, hasNextPage: false };
+    }
+
+    const creatorList = data.data?.creators || data.data?.creator_list || [];
+    const creators = creatorList.map((raw: any) =>
+      this.mapToCreatorSummary(raw),
+    );
+
+    const pageInfo = data.data?.page_info || {};
+    const currentPage = pageInfo.page || 1;
+    const total = pageInfo.total_number || 0;
+
+    return {
+      creators,
+      total,
+      hasNextPage: currentPage * limit < total,
+    };
   }
 
   /**
