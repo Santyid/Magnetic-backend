@@ -115,7 +115,7 @@ export class TikTokConnector {
           },
           params: {
             tto_tcm_account_id: this.tcmAccountId,
-            creator_id: creatorId,
+            handle_name: creatorId,
           },
         },
       );
@@ -146,27 +146,27 @@ export class TikTokConnector {
             },
             params: {
               tto_tcm_account_id: this.tcmAccountId,
-              creator_id: creatorId,
+              handle_name: creatorId,
               page_size: 9,
             },
           },
         );
 
         const videosData = videosResponse.data;
-        if (videosData.code === 0 && videosData.data?.video_list) {
-          profile.recentMedia = videosData.data.video_list.map(
-            (v: any) => ({
-              id: v.video_id || v.item_id || String(Math.random()),
-              type: 'VIDEO' as const,
-              thumbnailUrl: v.cover_image_url || v.video_cover_url,
-              caption: v.caption || v.title,
-              likeCount: v.like_count || v.likes_count || 0,
-              commentCount: v.comment_count || v.comments_count || 0,
-              timestamp: v.create_time
-                ? new Date(v.create_time * 1000).toISOString()
-                : undefined,
-            }),
-          );
+        const videoList =
+          videosData.data?.posts || videosData.data?.video_list || [];
+        if (videosData.code === 0 && videoList.length > 0) {
+          profile.recentMedia = videoList.map((v: any) => ({
+            id: v.video_id || v.item_id || String(Math.random()),
+            type: 'VIDEO' as const,
+            thumbnailUrl: v.thumbnail_url || v.cover_image_url,
+            caption: v.caption || v.title,
+            likeCount: v.likes || v.like_count || 0,
+            commentCount: v.comments || v.comment_count || 0,
+            timestamp: v.create_time
+              ? new Date(parseInt(v.create_time, 10)).toISOString()
+              : undefined,
+          }));
         }
       } catch (videoError) {
         this.logger.warn(
@@ -256,7 +256,11 @@ export class TikTokConnector {
       profilePictureUrl: raw.profile_image || raw.avatar_url,
       followersCount: raw.followers_count || raw.follower_count || 0,
       engagementRate: raw.engagement_rate || 0,
-      categories: raw.labels || raw.categories || [],
+      categories:
+        raw.content_labels?.map((l: any) => l.label_name) ||
+        raw.labels ||
+        raw.categories ||
+        [],
       isVerified: raw.is_verified || false,
     };
   }
@@ -268,7 +272,10 @@ export class TikTokConnector {
       ...summary,
       biography: raw.bio || raw.signature,
       profileUrl: `https://www.tiktok.com/@${raw.handle_name || summary.username}`,
-      interests: raw.interests || raw.labels || [],
+      interests:
+        raw.industry_labels?.map((l: any) => l.label_name) ||
+        raw.interests ||
+        [],
       gender: raw.gender,
       ageBucket: raw.age_range || raw.age_bucket,
       mediaCount: raw.videos_count || raw.video_count,

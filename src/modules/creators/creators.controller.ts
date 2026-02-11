@@ -27,7 +27,7 @@ export class CreatorsController {
   @Get(':creatorId')
   async getCreatorProfile(
     @Param('creatorId') creatorId: string,
-    @Query('platform') platform?: 'facebook' | 'instagram',
+    @Query('platform') platform?: 'facebook' | 'instagram' | 'tiktok',
   ) {
     return this.creatorsService.getCreatorProfile(creatorId, platform || 'facebook');
   }
