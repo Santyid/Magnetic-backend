@@ -50,5 +50,6 @@ export default () => ({
     appSecret: process.env.TIKTOK_APP_SECRET,
     accessToken: process.env.TIKTOK_ACCESS_TOKEN,
     advertiserId: process.env.TIKTOK_ADVERTISER_ID,
+    tcmAccountId: process.env.TIKTOK_TCM_ACCOUNT_ID,
   },
 });

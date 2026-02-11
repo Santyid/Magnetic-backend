@@ -14,12 +14,16 @@ export class TikTokConnector {
     'https://business-api.tiktok.com/open_api/v1.3';
   private readonly accessToken: string;
   private readonly advertiserId: string;
+  private readonly tcmAccountId: string;
 
   constructor(private configService: ConfigService) {
     this.accessToken =
       this.configService.get<string>('tiktok.accessToken') || '';
     this.advertiserId =
       this.configService.get<string>('tiktok.advertiserId') || '';
+    this.tcmAccountId =
+      this.configService.get<string>('tiktok.tcmAccountId') ||
+      this.advertiserId;
   }
 
   /**
@@ -34,7 +38,7 @@ export class TikTokConnector {
   ): Promise<CreatorSearchResult> {
     try {
       const params: Record<string, any> = {
-        advertiser_id: this.advertiserId,
+        tto_tcm_account_id: this.tcmAccountId,
         search_keyword: query,
         page_size: limit,
       };
@@ -116,7 +120,7 @@ export class TikTokConnector {
             'Access-Token': this.accessToken,
           },
           params: {
-            advertiser_id: this.advertiserId,
+            tto_tcm_account_id: this.tcmAccountId,
             creator_id: creatorId,
           },
         },
@@ -147,7 +151,7 @@ export class TikTokConnector {
               'Access-Token': this.accessToken,
             },
             params: {
-              advertiser_id: this.advertiserId,
+              tto_tcm_account_id: this.tcmAccountId,
               creator_id: creatorId,
               page_size: 9,
             },
@@ -219,7 +223,7 @@ export class TikTokConnector {
             'Access-Token': this.accessToken,
           },
           params: {
-            advertiser_id: this.advertiserId,
+            tto_tcm_account_id: this.tcmAccountId,
           },
         },
       );
