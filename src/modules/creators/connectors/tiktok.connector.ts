@@ -10,7 +10,8 @@ import type {
 @Injectable()
 export class TikTokConnector {
   private readonly logger = new Logger(TikTokConnector.name);
-  private readonly baseUrl = 'https://business-api.tiktok.com/open_api/v1.3';
+  private readonly businessApiUrl =
+    'https://business-api.tiktok.com/open_api/v1.3';
   private readonly accessToken: string;
   private readonly advertiserId: string;
 
@@ -23,6 +24,7 @@ export class TikTokConnector {
 
   /**
    * Search creators using the TikTok Creator Marketplace Discovery API.
+   * Requires a Business API token (NOT a v2 OAuth token).
    * Endpoint: GET /tto/tcm/creator/discover/
    */
   async searchCreators(
@@ -42,7 +44,7 @@ export class TikTokConnector {
       }
 
       const response = await axios.get(
-        `${this.baseUrl}/tto/tcm/creator/discover/`,
+        `${this.businessApiUrl}/tto/tcm/creator/discover/`,
         {
           headers: {
             'Access-Token': this.accessToken,
@@ -55,9 +57,11 @@ export class TikTokConnector {
 
       if (data.code !== 0) {
         this.logger.error(
-          `TikTok API error: ${data.message} (code: ${data.code})`,
+          `TikTok TTCM API error: ${data.message} (code: ${data.code})`,
         );
-        throw new Error('TIKTOK_SEARCH_FAILED');
+        throw new Error(
+          `TIKTOK_SEARCH_FAILED: ${data.message || 'Unknown error'} (code: ${data.code})`,
+        );
       }
 
       const creatorList = data.data?.creator_list || [];
@@ -81,22 +85,32 @@ export class TikTokConnector {
         totalCount,
       };
     } catch (error) {
+      const detail =
+        error.response?.data
+          ? JSON.stringify(error.response.data)
+          : error.message;
       this.logger.error(
-        `TikTok creator search failed for "${query}": ${error.response?.data?.message || error.message}`,
+        `TikTok creator search failed for "${query}": ${detail}`,
       );
+
+      if (this.isV2Token()) {
+        this.logger.error(
+          'Token appears to be a v2 OAuth token (act.*). TTCM endpoints require a Business API token from business-api.tiktok.com',
+        );
+      }
+
       throw new Error('TIKTOK_SEARCH_FAILED');
     }
   }
 
   /**
    * Get detailed creator profile.
-   * Uses /tto/tcm/creator/public/ for profile info and
-   * /tto/tcm/creator/public/video/list/ for recent videos.
+   * Requires a Business API token.
    */
   async getCreatorProfile(creatorId: string): Promise<CreatorProfile> {
     try {
       const response = await axios.get(
-        `${this.baseUrl}/tto/tcm/creator/public/`,
+        `${this.businessApiUrl}/tto/tcm/creator/public/`,
         {
           headers: {
             'Access-Token': this.accessToken,
@@ -127,7 +141,7 @@ export class TikTokConnector {
       // Fetch recent videos
       try {
         const videosResponse = await axios.get(
-          `${this.baseUrl}/tto/tcm/creator/public/video/list/`,
+          `${this.businessApiUrl}/tto/tcm/creator/public/video/list/`,
           {
             headers: {
               'Access-Token': this.accessToken,
@@ -173,10 +187,18 @@ export class TikTokConnector {
 
   /**
    * Validate the TikTok API connection.
+   * Tests both Business API and v2 API to detect token type.
    */
-  async validateConnection(): Promise<{ status: string; message?: string }> {
+  async validateConnection(): Promise<{
+    status: string;
+    message?: string;
+    tokenType?: string;
+  }> {
     if (!this.accessToken) {
-      return { status: 'not_configured', message: 'TIKTOK_ACCESS_TOKEN not set' };
+      return {
+        status: 'not_configured',
+        message: 'TIKTOK_ACCESS_TOKEN not set',
+      };
     }
     if (!this.advertiserId) {
       return {
@@ -185,9 +207,13 @@ export class TikTokConnector {
       };
     }
 
+    // Detect token type
+    const tokenType = this.isV2Token() ? 'v2_oauth' : 'business_api';
+
+    // Test Business API (required for TTCM)
     try {
       const response = await axios.get(
-        `${this.baseUrl}/tto/tcm/category/label/`,
+        `${this.businessApiUrl}/tto/tcm/category/label/`,
         {
           headers: {
             'Access-Token': this.accessToken,
@@ -199,19 +225,41 @@ export class TikTokConnector {
       );
 
       if (response.data.code === 0) {
-        return { status: 'ok' };
+        return { status: 'ok', tokenType: 'business_api' };
       }
 
       return {
         status: 'error',
-        message: response.data.message || 'Unknown error',
+        message: `Business API error: ${response.data.message || 'Unknown'}`,
+        tokenType,
       };
     } catch (error) {
+      // If Business API fails and token is v2, that's the likely cause
+      if (tokenType === 'v2_oauth') {
+        return {
+          status: 'wrong_token_type',
+          message:
+            'Token is a v2 OAuth token (from developers.tiktok.com). ' +
+            'TTCM endpoints require a Business API token from business-api.tiktok.com. ' +
+            'Register at business-api.tiktok.com/portal/developer/register and create a Business API app.',
+          tokenType,
+        };
+      }
+
       return {
         status: 'error',
         message: error.message,
+        tokenType,
       };
     }
+  }
+
+  /**
+   * Detect if the current token is a v2 OAuth token.
+   * v2 tokens start with 'act.' prefix.
+   */
+  private isV2Token(): boolean {
+    return this.accessToken.startsWith('act.');
   }
 
   private mapToCreatorSummary(raw: any): CreatorSummary {
@@ -234,7 +282,11 @@ export class TikTokConnector {
     return {
       ...summary,
       biography: raw.bio || raw.signature,
-      profileUrl: raw.profile_url || (raw.display_name ? `https://www.tiktok.com/@${raw.display_name}` : undefined),
+      profileUrl:
+        raw.profile_url ||
+        (raw.display_name
+          ? `https://www.tiktok.com/@${raw.display_name}`
+          : undefined),
       interests: raw.interests || raw.labels || [],
       gender: raw.gender,
       ageBucket: raw.age_range || raw.age_bucket,

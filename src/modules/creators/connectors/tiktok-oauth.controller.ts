@@ -5,13 +5,17 @@ import axios from 'axios';
 
 /**
  * Utility controller for TikTok OAuth2 flow.
- * Uses the TikTok v2 OAuth (tiktok.com/v2/auth/authorize) which is
- * what the TikTok Developer Portal generates.
  *
- * Flow:
- * 1. Visit GET /api/tiktok/authorize → redirects to TikTok auth page
- * 2. TikTok redirects back to GET /api/tiktok/callback?code=xxx
- * 3. Callback exchanges code for access_token and displays it
+ * TikTok has TWO separate API systems with incompatible tokens:
+ * - v2 API (developers.tiktok.com) → token for open.tiktokapis.com
+ * - Business API (business-api.tiktok.com) → token for business-api.tiktok.com
+ *
+ * TTCM (Creator Marketplace) endpoints ONLY work with Business API tokens.
+ *
+ * Endpoints:
+ * - GET /api/tiktok/authorize          → Business API OAuth (for TTCM access)
+ * - GET /api/tiktok/authorize-v2       → v2 OAuth (for basic user/video access)
+ * - GET /api/tiktok/callback           → Handles callback from both flows
  */
 @Controller('tiktok')
 export class TikTokOAuthController {
@@ -19,19 +23,48 @@ export class TikTokOAuthController {
 
   constructor(private configService: ConfigService) {}
 
+  /**
+   * Business API OAuth flow (required for TTCM endpoints).
+   * Redirects to business-api.tiktok.com/portal/auth
+   */
   @Get('authorize')
   authorize(@Res() res: Response) {
     const appId = this.configService.get<string>('tiktok.appId');
     if (!appId) {
-      return res.status(400).send(
-        '<h2>Error: TIKTOK_APP_ID not configured in .env</h2>',
-      );
+      return res
+        .status(400)
+        .send('<h2>Error: TIKTOK_APP_ID not configured in .env</h2>');
     }
 
     const redirectUri = this.getRedirectUri();
-    const state = 'magnetic_tiktok_setup';
+    const state = 'magnetic_tiktok_business';
 
-    // Scopes for TTCM (Creator Marketplace) access
+    const authUrl =
+      `https://business-api.tiktok.com/portal/auth` +
+      `?app_id=${appId}` +
+      `&state=${state}` +
+      `&redirect_uri=${encodeURIComponent(redirectUri)}`;
+
+    this.logger.log(`Redirecting to TikTok Business API auth: ${authUrl}`);
+    return res.redirect(authUrl);
+  }
+
+  /**
+   * v2 OAuth flow (for basic user info and video access).
+   * Redirects to tiktok.com/v2/auth/authorize
+   */
+  @Get('authorize-v2')
+  authorizeV2(@Res() res: Response) {
+    const appId = this.configService.get<string>('tiktok.appId');
+    if (!appId) {
+      return res
+        .status(400)
+        .send('<h2>Error: TIKTOK_APP_ID not configured in .env</h2>');
+    }
+
+    const redirectUri = this.getRedirectUri();
+    const state = 'magnetic_tiktok_v2';
+
     const scopes = [
       'user.info.basic',
       'biz.creator.info',
@@ -42,7 +75,6 @@ export class TikTokOAuthController {
       'comment.list',
     ].join(',');
 
-    // Use TikTok v2 OAuth (matches the Developer Portal configuration)
     const authUrl =
       `https://www.tiktok.com/v2/auth/authorize` +
       `?client_key=${appId}` +
@@ -55,6 +87,9 @@ export class TikTokOAuthController {
     return res.redirect(authUrl);
   }
 
+  /**
+   * Callback handler for both Business API and v2 OAuth flows.
+   */
   @Get('callback')
   async callback(
     @Query('code') code: string,
@@ -64,7 +99,6 @@ export class TikTokOAuthController {
     @Query('error_description') errorDescription: string,
     @Res() res: Response,
   ) {
-    // Handle error response from TikTok
     if (error) {
       return res.status(400).send(
         `<h2>TikTok authorization denied</h2>` +
@@ -73,8 +107,8 @@ export class TikTokOAuthController {
       );
     }
 
-    // TikTok v2 sends 'code', Business API sends 'auth_code'
-    const finalCode = code || authCode;
+    // Business API sends 'auth_code', v2 sends 'code'
+    const finalCode = authCode || code;
 
     if (!finalCode) {
       return res.status(400).send(
@@ -94,19 +128,36 @@ export class TikTokOAuthController {
       );
     }
 
-    // Try v2 token exchange first, then fallback to Business API
-    const tokenData = await this.exchangeTokenV2(appId, appSecret, finalCode);
-    if (tokenData) {
-      return this.renderSuccess(res, tokenData);
+    const isBusinessFlow = state === 'magnetic_tiktok_business' || !!authCode;
+
+    // Try Business API token exchange first if it's a Business flow
+    if (isBusinessFlow) {
+      const businessToken = await this.exchangeTokenBusiness(
+        appId,
+        appSecret,
+        finalCode,
+      );
+      if (businessToken) {
+        return this.renderSuccess(res, businessToken, 'business_api');
+      }
     }
 
-    const businessTokenData = await this.exchangeTokenBusiness(
-      appId,
-      appSecret,
-      finalCode,
-    );
-    if (businessTokenData) {
-      return this.renderSuccess(res, businessTokenData);
+    // Try v2 token exchange
+    const v2Token = await this.exchangeTokenV2(appId, appSecret, finalCode);
+    if (v2Token) {
+      return this.renderSuccess(res, v2Token, 'v2_oauth');
+    }
+
+    // Fallback: try the other method
+    if (!isBusinessFlow) {
+      const businessToken = await this.exchangeTokenBusiness(
+        appId,
+        appSecret,
+        finalCode,
+      );
+      if (businessToken) {
+        return this.renderSuccess(res, businessToken, 'business_api');
+      }
     }
 
     return res.status(500).send(
@@ -166,7 +217,7 @@ export class TikTokOAuthController {
   }
 
   /**
-   * TikTok Business API token exchange (fallback).
+   * TikTok Business API token exchange.
    * POST https://business-api.tiktok.com/open_api/v1.3/oauth2/access_token/
    */
   private async exchangeTokenBusiness(
@@ -208,7 +259,7 @@ export class TikTokOAuthController {
     }
   }
 
-  private renderSuccess(res: Response, tokenData: any) {
+  private renderSuccess(res: Response, tokenData: any, tokenType: string) {
     const accessToken =
       tokenData.access_token || tokenData.data?.access_token || 'N/A';
     const refreshToken =
@@ -217,11 +268,22 @@ export class TikTokOAuthController {
       tokenData.expires_in ||
       tokenData.access_token_expires_in ||
       tokenData.data?.access_token_expires_in;
-    const scope =
-      tokenData.scope || tokenData.data?.scope || 'N/A';
+    const scope = tokenData.scope || tokenData.data?.scope || 'N/A';
     const advertiserIds =
       tokenData.advertiser_ids || tokenData.data?.advertiser_ids;
     const openId = tokenData.open_id;
+
+    const isBusinessToken = tokenType === 'business_api';
+    const tokenWarning = !isBusinessToken
+      ? `<div class="warn" style="background:#fef3c7;border:1px solid #f59e0b;padding:12px;border-radius:8px;margin:16px 0;">
+          <strong>Warning:</strong> This is a v2 OAuth token. It will NOT work with TikTok Creator Marketplace (TTCM) endpoints.
+          To get a Business API token, register your app at
+          <a href="https://business-api.tiktok.com/portal/developer/register" target="_blank">business-api.tiktok.com</a>
+          and use the <code>/api/tiktok/authorize</code> endpoint (Business API flow).
+        </div>`
+      : `<div style="background:#d1fae5;border:1px solid #10b981;padding:12px;border-radius:8px;margin:16px 0;">
+          <strong>Business API token obtained.</strong> This token works with TTCM endpoints.
+        </div>`;
 
     return res.send(`
       <!DOCTYPE html>
@@ -240,6 +302,8 @@ export class TikTokOAuthController {
       </head>
       <body>
         <h1 class="success">TikTok OAuth Successful!</h1>
+        <p>Token type: <strong>${tokenType}</strong></p>
+        ${tokenWarning}
         <p>Copy the access token to your Railway env vars as <code>TIKTOK_ACCESS_TOKEN</code>:</p>
 
         <div class="token-box">
@@ -247,19 +311,27 @@ export class TikTokOAuthController {
           <div>${accessToken}</div>
         </div>
 
-        ${advertiserIds ? `
+        ${
+          advertiserIds
+            ? `
         <div class="token-box">
           <div class="label">Advertiser IDs</div>
           <div>${JSON.stringify(advertiserIds)}</div>
         </div>
-        ` : ''}
+        `
+            : ''
+        }
 
-        ${openId ? `
+        ${
+          openId
+            ? `
         <div class="token-box">
           <div class="label">Open ID</div>
           <div>${openId}</div>
         </div>
-        ` : ''}
+        `
+            : ''
+        }
 
         <div class="token-box">
           <div class="label">Scope</div>
@@ -271,12 +343,16 @@ export class TikTokOAuthController {
           <div>${expiresIn ? expiresIn + ' seconds (~' + Math.round(expiresIn / 3600) + ' hours)' : 'N/A'}</div>
         </div>
 
-        ${refreshToken ? `
+        ${
+          refreshToken
+            ? `
         <div class="token-box">
           <div class="label">Refresh Token (save this too!)</div>
           <div>${refreshToken}</div>
         </div>
-        ` : ''}
+        `
+            : ''
+        }
 
         <h3>Full response:</h3>
         <pre>${JSON.stringify(tokenData, null, 2)}</pre>

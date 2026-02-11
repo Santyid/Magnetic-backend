@@ -18,10 +18,10 @@ export class Session {
   @Column({ name: 'user_id' })
   userId: string;
 
-  @Column({ unique: true })
+  @Column()
   token: string;
 
-  @Column({ name: 'refresh_token', unique: true })
+  @Column({ name: 'refresh_token' })
   refreshToken: string;
 
   @Column({ name: 'expires_at' })
