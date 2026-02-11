@@ -23,21 +23,34 @@ export class CreatorsService {
   private searchCache = new Map<string, CacheEntry<CreatorSearchResult>>();
   private profileCache = new Map<string, CacheEntry<CreatorProfile>>();
   private rateLimitMap = new Map<string, RateLimitEntry>();
-  private readonly RATE_LIMIT = 100; // searches per hour
   private readonly RATE_LIMIT_WINDOW = 60 * 60 * 1000; // 1 hour in ms
-  private readonly CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+  private readonly RATE_LIMITS: Record<string, number> = {
+    tiktok: 20, // TikTok Basic plan — conserve API quota
+    meta: 100,
+  };
+  private readonly SEARCH_CACHE_TTL: Record<string, number> = {
+    tiktok: 30 * 60 * 1000, // 30 minutes
+    meta: 5 * 60 * 1000, // 5 minutes
+  };
+  private readonly PROFILE_CACHE_TTL: Record<string, number> = {
+    tiktok: 2 * 60 * 60 * 1000, // 2 hours
+    meta: 5 * 60 * 1000, // 5 minutes
+  };
 
   constructor(
     private metaConnector: MetaConnector,
     private tiktokConnector: TikTokConnector,
   ) {}
 
-  private checkRateLimit(userId: string): void {
+  private checkRateLimit(userId: string, platform: string): void {
     const now = new Date();
-    const entry = this.rateLimitMap.get(userId);
+    const key = `${userId}:${platform}`;
+    const limit =
+      this.RATE_LIMITS[platform] || this.RATE_LIMITS.meta;
+    const entry = this.rateLimitMap.get(key);
 
     if (!entry) {
-      this.rateLimitMap.set(userId, {
+      this.rateLimitMap.set(key, {
         count: 1,
         resetAt: new Date(now.getTime() + this.RATE_LIMIT_WINDOW),
       });
@@ -45,14 +58,14 @@ export class CreatorsService {
     }
 
     if (now >= entry.resetAt) {
-      this.rateLimitMap.set(userId, {
+      this.rateLimitMap.set(key, {
         count: 1,
         resetAt: new Date(now.getTime() + this.RATE_LIMIT_WINDOW),
       });
       return;
     }
 
-    if (entry.count >= this.RATE_LIMIT) {
+    if (entry.count >= limit) {
       const secondsUntilReset = Math.ceil(
         (entry.resetAt.getTime() - now.getTime()) / 1000,
       );
@@ -73,10 +86,10 @@ export class CreatorsService {
     userId: string,
     params: SearchCreatorsDto,
   ): Promise<CreatorSearchResult> {
-    this.checkRateLimit(userId);
+    const platform = params.platform || 'facebook';
+    this.checkRateLimit(userId, platform);
 
     const limit = params.limit || 20;
-    const platform = params.platform || 'facebook';
     const cacheKey = `search:${platform}:${params.q}:${limit}:${params.cursor || ''}`;
 
     // Check cache
@@ -103,10 +116,11 @@ export class CreatorsService {
         );
       }
 
-      // Cache result
+      // Cache result with platform-specific TTL
+      const ttl = this.SEARCH_CACHE_TTL[platform] || this.SEARCH_CACHE_TTL.meta;
       this.searchCache.set(cacheKey, {
         data: result,
-        expiresAt: Date.now() + this.CACHE_TTL,
+        expiresAt: Date.now() + ttl,
       });
 
       return result;
@@ -154,9 +168,10 @@ export class CreatorsService {
         );
       }
 
+      const ttl = this.PROFILE_CACHE_TTL[platform] || this.PROFILE_CACHE_TTL.meta;
       this.profileCache.set(cacheKey, {
         data: profile,
-        expiresAt: Date.now() + this.CACHE_TTL,
+        expiresAt: Date.now() + ttl,
       });
 
       return profile;
