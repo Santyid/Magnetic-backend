@@ -216,6 +216,7 @@ export class TikTokConnector {
             caption: v.caption || v.title,
             likeCount: v.likes || v.like_count || 0,
             commentCount: v.comments || v.comment_count || 0,
+            viewCount: v.video_views || v.views || 0,
             timestamp: v.create_time
               ? new Date(parseInt(v.create_time, 10)).toISOString()
               : undefined,
@@ -334,6 +335,9 @@ export class TikTokConnector {
       mediaCount: raw.videos_count || raw.video_count,
       avgLikes: raw.avg_like_count || raw.avg_likes,
       avgComments: raw.avg_comment_count || raw.avg_comments,
+      creatorPrice: raw.creator_price || undefined,
+      currency: raw.currency || undefined,
+      medianViews: raw.median_views || undefined,
     };
   }
 }
