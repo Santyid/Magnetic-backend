@@ -2,7 +2,6 @@ import {
   IsOptional,
   IsArray,
   IsString,
-  IsIn,
   IsInt,
   Min,
   Max,
@@ -14,10 +13,6 @@ export class SyncCreatorsDto {
   @IsArray()
   @IsString({ each: true })
   keywords?: string[];
-
-  @IsOptional()
-  @IsIn(['tiktok'])
-  platform?: string = 'tiktok';
 
   @IsOptional()
   @Transform(({ value }) => parseInt(value, 10))
