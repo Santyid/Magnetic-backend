@@ -38,8 +38,17 @@ src/
 │   │   └── dto/chat.dto.ts
 │   ├── dashboard/                   # 4 endpoints
 │   │   └── connectors/advocates.connector.ts
-│   └── creators/                    # 2 endpoints (Meta API)
-│       └── connectors/meta.connector.ts
+│   ├── creators/                    # 2 endpoints (Meta API)
+│   │   └── connectors/meta.connector.ts
+│   └── proposals/                   # 5 endpoints Admin-only (Propuesta Comercial Adpro)
+│       ├── proposals.module.ts
+│       ├── proposals.controller.ts
+│       ├── proposals.service.ts     # Orquestación async + polling
+│       ├── analysis.service.ts      # Motor de Reglas Adpro
+│       ├── entities/                # proposal, proposal-company, proposal-employee, proposal-projection
+│       ├── scrapers/                # linkedin, facebook, instagram, tiktok
+│       ├── interfaces/              # linkedin, facebook, instagram, tiktok
+│       └── dto/create-proposal.dto.ts
 └── database/seeds/
     ├── setup-demo.ts
     └── setup-custom-users.ts
@@ -81,6 +90,10 @@ META_APP_SECRET=<app-secret>
 META_ACCESS_TOKEN=<access-token>
 META_PAGE_ID=<page-id>
 META_GRAPH_API_VERSION=v24.0
+
+# RapidAPI (Proposals module)
+RAPIDAPI_KEY=<key-para-linkedin-y-facebook>
+RAPIDAPI_KEY_INSTAGRAM=<key-para-instagram-y-tiktok>
 ```
 
 ## Product Connectors

@@ -53,4 +53,11 @@ export default () => ({
     advertiserId: process.env.TIKTOK_ADVERTISER_ID,
     tcmAccountId: process.env.TIKTOK_TCM_ACCOUNT_ID,
   },
+  rapidapi: {
+    key: process.env.RAPIDAPI_KEY,
+    instagramKey: process.env.RAPIDAPI_KEY_INSTAGRAM,
+  },
+  twitterapi: {
+    key: process.env.TWITTERAPI_KEY,
+  },
 });

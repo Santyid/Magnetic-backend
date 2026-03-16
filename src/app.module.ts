@@ -12,6 +12,7 @@ import { AiModule } from './modules/ai/ai.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { CreatorsMetaModule } from './modules/creators-meta/creators-meta.module';
 import { CreatorsTikTokModule } from './modules/creators-tiktok/creators-tiktok.module';
+import { ProposalsModule } from './modules/proposals/proposals.module';
 import { HealthController } from './health.controller';
 import { User } from './modules/users/entities/user.entity';
 import { Product } from './modules/products/entities/product.entity';
@@ -19,6 +20,10 @@ import { UserProduct } from './modules/products/entities/user-product.entity';
 import { Session } from './modules/sessions/entities/session.entity';
 import { PasswordResetToken } from './modules/auth/entities/password-reset-token.entity';
 import { Creator } from './common/entities/creator.entity';
+import { Proposal } from './modules/proposals/entities/proposal.entity';
+import { ProposalCompany } from './modules/proposals/entities/proposal-company.entity';
+import { ProposalEmployee } from './modules/proposals/entities/proposal-employee.entity';
+import { ProposalProjection } from './modules/proposals/entities/proposal-projection.entity';
 
 @Module({
   imports: [
@@ -35,7 +40,7 @@ import { Creator } from './common/entities/creator.entity';
         username: configService.get('database.username'),
         password: configService.get('database.password'),
         database: configService.get('database.database'),
-        entities: [User, Product, UserProduct, Session, PasswordResetToken, Creator],
+        entities: [User, Product, UserProduct, Session, PasswordResetToken, Creator, Proposal, ProposalCompany, ProposalEmployee, ProposalProjection],
         synchronize: process.env.NODE_ENV !== 'production',
         logging: process.env.NODE_ENV === 'development',
       }),
@@ -54,6 +59,7 @@ import { Creator } from './common/entities/creator.entity';
     DashboardModule,
     CreatorsMetaModule,
     CreatorsTikTokModule,
+    ProposalsModule,
   ],
   controllers: [HealthController],
 })

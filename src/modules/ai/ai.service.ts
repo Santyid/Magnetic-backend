@@ -179,4 +179,85 @@ Información de los productos:
       );
     }
   }
+
+  /**
+   * Genera un análisis comercial de una propuesta para vender Adpro
+   */
+  async analyzeProposal(proposal: {
+    company?: { name?: string; industry?: string; employeeCount?: number };
+    projections?: Array<{
+      platform: string;
+      followers?: number;
+      growthFactor?: number;
+      projectedLikes?: number;
+      ambassadorCount?: number;
+      ambassadorFollowers?: number;
+      potentialReach?: number;
+      classification?: string;
+    }>;
+  }): Promise<Record<string, unknown>> {
+    const ORGANIC_REACH: Record<string, number> = {
+      linkedin: 0.10, instagram: 0.08, facebook: 0.03, twitter: 0.08, tiktok: 0.25,
+    };
+
+    const platformsData = (proposal.projections ?? []).map((p) => {
+      const potentialReach = p.potentialReach ?? ((p.followers ?? 0) + (p.ambassadorFollowers ?? 0));
+      const impressionsWith = Math.round(potentialReach * (ORGANIC_REACH[p.platform] ?? 0.08));
+      const estimatedReactions = Math.round((p.projectedLikes ?? 0) * 1.2);
+      return { ...p, impressionsWith, estimatedReactions };
+    });
+
+    const systemPrompt = `Eres un consultor senior de ventas de Adpro (AdvocatesPro), la plataforma de Employee Advocacy líder en Latinoamérica. Adpro activa a los empleados como embajadores de marca en sus redes personales, amplificando el alcance orgánico de forma auténtica y medible.
+
+Tu misión: analizar las métricas reales de redes sociales de la empresa y generar un análisis comercial persuasivo y específico que justifique la contratación de Adpro.
+
+Responde ÚNICAMENTE con JSON válido (sin markdown) con esta estructura exacta:
+{
+  "summary": "2-3 oraciones ejecutivas que capturen la oportunidad concreta de esta empresa con datos reales",
+  "platformInsights": [
+    {
+      "platform": "nombre_plataforma",
+      "insight": "Situación actual en esta plataforma (1-2 oraciones con datos reales)",
+      "opportunity": "Lo que Adpro puede lograr específicamente aquí (1-2 oraciones con proyecciones)"
+    }
+  ],
+  "keyBenefits": [
+    "Beneficio 1 con cifra estimada específica para esta empresa",
+    "Beneficio 2 con cifra estimada específica para esta empresa",
+    "Beneficio 3 con cifra estimada específica para esta empresa"
+  ],
+  "callToAction": "Frase de cierre poderosa y personalizada que invite a agendar una demo de Adpro"
+}`;
+
+    const userPrompt = `Empresa: ${proposal.company?.name ?? 'Sin nombre'}
+Industria: ${proposal.company?.industry || 'No especificada'}
+Empleados en LinkedIn: ${proposal.company?.employeeCount ?? 0}
+
+Datos por plataforma:
+${platformsData.map((p) => `PLATAFORMA: ${p.platform.toUpperCase()}
+- Seguidores actuales: ${(p.followers ?? 0).toLocaleString('es')}
+- Embajadores potenciales: ${p.ambassadorCount ?? 0}
+- Factor de crecimiento con Adpro: ${(p.growthFactor ?? 1).toFixed(1)}x
+- Clasificación de oportunidad: ${p.classification ?? 'LOW'}
+- Impresiones estimadas con Adpro: ${p.impressionsWith.toLocaleString('es')}
+- Reacciones estimadas: ${p.estimatedReactions.toLocaleString('es')}
+- Likes proyectados: ${(p.projectedLikes ?? 0).toLocaleString('es')}`).join('\n\n')}
+
+Genera el análisis en español, siendo específico y persuasivo con los datos reales.`;
+
+    const model = this.configService.get<string>('openai.model') || 'gpt-4o-mini';
+    const completion = await this.openai.chat.completions.create({
+      model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      max_tokens: 1200,
+      temperature: 0.75,
+      response_format: { type: 'json_object' },
+    });
+
+    const content = completion.choices[0]?.message?.content ?? '{}';
+    return JSON.parse(content);
+  }
 }
