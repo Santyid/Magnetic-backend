@@ -1,16 +1,15 @@
 import { Injectable, Logger, HttpException, HttpStatus } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { Cron } from '@nestjs/schedule';
 import { Repository, Brackets } from 'typeorm';
-import { MetaConnector } from './connectors/meta.connector';
 import { TikTokConnector } from './connectors/tiktok.connector';
-import { SearchCreatorsDto } from './dto/search-creators.dto';
-import { Creator } from './entities/creator.entity';
+import { SearchCreatorsTikTokDto } from './dto/search-creators-tiktok.dto';
+import { Creator } from '../../common/entities/creator.entity';
 import type {
   CreatorProfile,
   CreatorSearchResult,
   CreatorSummary,
-} from './interfaces/creator.interface';
+} from '../../common/interfaces/creator.interface';
 
 interface RateLimitEntry {
   count: number;
@@ -55,38 +54,27 @@ const DEFAULT_SYNC_KEYWORDS = [
 ];
 
 @Injectable()
-export class CreatorsService {
-  private readonly logger = new Logger(CreatorsService.name);
+export class CreatorsTikTokService {
+  private readonly logger = new Logger(CreatorsTikTokService.name);
   private searchCache = new Map<string, CacheEntry<CreatorSearchResult>>();
   private profileCache = new Map<string, CacheEntry<CreatorProfile>>();
   private rateLimitMap = new Map<string, RateLimitEntry>();
   private readonly RATE_LIMIT_WINDOW = 60 * 60 * 1000; // 1 hour in ms
-  private readonly RATE_LIMITS: Record<string, number> = {
-    tiktok: 20, // TikTok Basic plan — conserve API quota
-    meta: 100,
-  };
-  private readonly SEARCH_CACHE_TTL: Record<string, number> = {
-    tiktok: 30 * 60 * 1000, // 30 minutes
-    meta: 5 * 60 * 1000, // 5 minutes
-  };
-  private readonly PROFILE_CACHE_TTL: Record<string, number> = {
-    tiktok: 2 * 60 * 60 * 1000, // 2 hours
-    meta: 5 * 60 * 1000, // 5 minutes
-  };
+  private readonly RATE_LIMIT = 20; // TikTok Basic plan — conserve API quota
+  private readonly SEARCH_CACHE_TTL = 30 * 60 * 1000; // 30 minutes
+  private readonly PROFILE_CACHE_TTL = 2 * 60 * 60 * 1000; // 2 hours
 
   constructor(
     @InjectRepository(Creator)
     private creatorRepo: Repository<Creator>,
-    private metaConnector: MetaConnector,
     private tiktokConnector: TikTokConnector,
   ) {}
 
   // ─── Rate Limiting ──────────────────────────────────────────
 
-  private checkRateLimit(userId: string, platform: string): void {
+  private checkRateLimit(userId: string): void {
     const now = new Date();
-    const key = `${userId}:${platform}`;
-    const limit = this.RATE_LIMITS[platform] || this.RATE_LIMITS.meta;
+    const key = `${userId}:tiktok`;
     const entry = this.rateLimitMap.get(key);
 
     if (!entry) {
@@ -105,7 +93,7 @@ export class CreatorsService {
       return;
     }
 
-    if (entry.count >= limit) {
+    if (entry.count >= this.RATE_LIMIT) {
       const secondsUntilReset = Math.ceil(
         (entry.resetAt.getTime() - now.getTime()) / 1000,
       );
@@ -126,7 +114,6 @@ export class CreatorsService {
 
   async syncCreators(
     keywords?: string[],
-    platform = 'tiktok',
     maxPagesPerKeyword = 2,
   ): Promise<SyncResult> {
     const startTime = Date.now();
@@ -152,7 +139,7 @@ export class CreatorsService {
           totalApiCalls++;
 
           for (const creator of result.creators) {
-            await this.upsertCreator(creator, platform, keyword);
+            await this.upsertCreator(creator, keyword);
             totalSynced++;
           }
 
@@ -177,7 +164,7 @@ export class CreatorsService {
     }
 
     const totalCreatorsInDb = await this.creatorRepo.count({
-      where: { platform },
+      where: { platform: 'tiktok' },
     });
 
     const durationMs = Date.now() - startTime;
@@ -197,11 +184,10 @@ export class CreatorsService {
 
   private async upsertCreator(
     summary: CreatorSummary,
-    platform: string,
     keyword: string,
   ): Promise<void> {
     const existing = await this.creatorRepo.findOne({
-      where: { platformId: summary.id, platform },
+      where: { platformId: summary.id, platform: 'tiktok' },
     });
 
     if (existing) {
@@ -219,7 +205,7 @@ export class CreatorsService {
     } else {
       const creator = this.creatorRepo.create({
         platformId: summary.id,
-        platform,
+        platform: 'tiktok',
         username: summary.username,
         name: summary.name,
         profilePictureUrl: summary.profilePictureUrl,
@@ -242,12 +228,15 @@ export class CreatorsService {
     lastSyncAt: Date | null;
     oldestData: Date | null;
   }> {
-    const totalCreators = await this.creatorRepo.count();
+    const totalCreators = await this.creatorRepo.count({
+      where: { platform: 'tiktok' },
+    });
 
     const byPlatformRaw = await this.creatorRepo
       .createQueryBuilder('c')
       .select('c.platform', 'platform')
       .addSelect('COUNT(*)', 'count')
+      .where('c.platform = :platform', { platform: 'tiktok' })
       .groupBy('c.platform')
       .getRawMany();
 
@@ -257,13 +246,13 @@ export class CreatorsService {
     }
 
     const newest = await this.creatorRepo.findOne({
-      where: {},
+      where: { platform: 'tiktok' },
       order: { lastSyncedAt: 'DESC' },
       select: ['lastSyncedAt'],
     });
 
     const oldest = await this.creatorRepo.findOne({
-      where: {},
+      where: { platform: 'tiktok' },
       order: { lastSyncedAt: 'ASC' },
       select: ['lastSyncedAt'],
     });
@@ -295,63 +284,13 @@ export class CreatorsService {
 
   async searchCreators(
     userId: string,
-    params: SearchCreatorsDto,
+    params: SearchCreatorsTikTokDto,
   ): Promise<CreatorSearchResult> {
-    const platform = params.platform || 'facebook';
-
-    // TikTok: search from local DB (no API calls)
-    if (platform === 'tiktok') {
-      return this.searchCreatorsFromDb(params.q, platform, params.limit || 20, params.cursor);
-    }
-
-    // Meta: search via API (existing behavior)
-    this.checkRateLimit(userId, platform);
-
-    const limit = params.limit || 20;
-    const cacheKey = `search:${platform}:${params.q}:${limit}:${params.cursor || ''}`;
-
-    const cached = this.searchCache.get(cacheKey);
-    if (cached && cached.expiresAt > Date.now()) {
-      return cached.data;
-    }
-
-    try {
-      const result = await this.metaConnector.searchCreators(
-        params.q,
-        platform,
-        limit,
-        params.cursor,
-      );
-
-      const ttl =
-        this.SEARCH_CACHE_TTL[platform] || this.SEARCH_CACHE_TTL.meta;
-      this.searchCache.set(cacheKey, {
-        data: result,
-        expiresAt: Date.now() + ttl,
-      });
-
-      return result;
-    } catch (error) {
-      this.logger.error(`Search creators failed: ${error.message}`);
-
-      if (error instanceof HttpException) {
-        throw error;
-      }
-
-      throw new HttpException(
-        {
-          statusCode: 502,
-          message: 'META_API_ERROR',
-          error: error.message,
-        },
-        HttpStatus.BAD_GATEWAY,
-      );
-    }
+    return this.searchCreatorsFromDb(params.q, params.limit || 20, params.cursor);
   }
 
   private async searchCreatorsFromDb(
     query: string,
-    platform: string,
     limit: number,
     cursor?: string,
   ): Promise<CreatorSearchResult> {
@@ -359,7 +298,7 @@ export class CreatorsService {
 
     const qb = this.creatorRepo
       .createQueryBuilder('creator')
-      .where('creator.platform = :platform', { platform });
+      .where('creator.platform = :platform', { platform: 'tiktok' });
 
     if (query && query.trim()) {
       qb.andWhere(
@@ -393,60 +332,7 @@ export class CreatorsService {
 
   // ─── Profile ────────────────────────────────────────────────
 
-  async getCreatorProfile(
-    creatorId: string,
-    platform: 'facebook' | 'instagram' | 'tiktok' = 'facebook',
-  ): Promise<CreatorProfile> {
-    // TikTok: check DB first, fall back to API
-    if (platform === 'tiktok') {
-      return this.getTikTokProfileFromDb(creatorId);
-    }
-
-    // Meta: use API with cache (existing behavior)
-    const cacheKey = `profile:${platform}:${creatorId}`;
-
-    const cached = this.profileCache.get(cacheKey);
-    if (cached && cached.expiresAt > Date.now()) {
-      return cached.data;
-    }
-
-    try {
-      const profile = await this.metaConnector.getCreatorProfile(
-        creatorId,
-        platform,
-      );
-
-      const ttl =
-        this.PROFILE_CACHE_TTL[platform] || this.PROFILE_CACHE_TTL.meta;
-      this.profileCache.set(cacheKey, {
-        data: profile,
-        expiresAt: Date.now() + ttl,
-      });
-
-      return profile;
-    } catch (error) {
-      this.logger.error(
-        `Get creator profile failed for ${creatorId}: ${error.message}`,
-      );
-
-      if (error instanceof HttpException) {
-        throw error;
-      }
-
-      throw new HttpException(
-        {
-          statusCode: 502,
-          message: 'META_API_ERROR',
-          error: error.message,
-        },
-        HttpStatus.BAD_GATEWAY,
-      );
-    }
-  }
-
-  private async getTikTokProfileFromDb(
-    creatorId: string,
-  ): Promise<CreatorProfile> {
+  async getCreatorProfile(creatorId: string): Promise<CreatorProfile> {
     // Check DB first
     const entity = await this.creatorRepo.findOne({
       where: { platformId: creatorId, platform: 'tiktok' },
@@ -532,7 +418,7 @@ export class CreatorsService {
   private entityToSummary(entity: Creator): CreatorSummary {
     return {
       id: entity.platformId,
-      platform: entity.platform as any,
+      platform: 'tiktok',
       username: entity.username,
       name: entity.name,
       profilePictureUrl: entity.profilePictureUrl,

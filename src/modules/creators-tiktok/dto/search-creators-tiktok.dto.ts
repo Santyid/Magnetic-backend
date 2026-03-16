@@ -1,13 +1,9 @@
-import { IsString, IsOptional, IsIn, IsInt, Min, Max } from 'class-validator';
+import { IsString, IsOptional, IsInt, Min, Max } from 'class-validator';
 import { Transform } from 'class-transformer';
 
-export class SearchCreatorsDto {
+export class SearchCreatorsTikTokDto {
   @IsString()
   q: string;
-
-  @IsOptional()
-  @IsIn(['facebook', 'instagram', 'tiktok'])
-  platform?: 'facebook' | 'instagram' | 'tiktok' = 'facebook';
 
   @IsOptional()
   @Transform(({ value }) => parseInt(value, 10))

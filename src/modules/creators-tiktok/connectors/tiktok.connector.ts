@@ -5,7 +5,7 @@ import type {
   CreatorSummary,
   CreatorProfile,
   CreatorSearchResult,
-} from '../interfaces/creator.interface';
+} from '../../../common/interfaces/creator.interface';
 
 @Injectable()
 export class TikTokConnector {

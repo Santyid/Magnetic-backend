@@ -17,6 +17,7 @@ export class HealthController {
       database: await this.checkDatabase(),
       openai: this.checkOpenAI(),
       meta: this.checkMeta(),
+      tiktok: this.checkTikTok(),
       encryption: this.checkEncryption(),
       jwt: this.checkJWT(),
     };
@@ -77,6 +78,18 @@ export class HealthController {
     const pageId = this.configService.get('meta.pageId');
     if (!pageId) {
       return { status: 'warning', message: 'META_PAGE_ID not configured' };
+    }
+    return { status: 'ok' };
+  }
+
+  private checkTikTok(): { status: string; message?: string } {
+    const accessToken = this.configService.get('tiktok.accessToken');
+    if (!accessToken) {
+      return { status: 'not_configured', message: 'TIKTOK_ACCESS_TOKEN not set' };
+    }
+    const tcmAccountId = this.configService.get('tiktok.tcmAccountId');
+    if (!tcmAccountId) {
+      return { status: 'warning', message: 'TIKTOK_TCM_ACCOUNT_ID not configured' };
     }
     return { status: 'ok' };
   }
@@ -148,9 +161,15 @@ export class HealthController {
       ai: [
         'POST /api/ai/chat',
       ],
-      creators: [
-        'GET /api/creators/search',
-        'GET /api/creators/:creatorId',
+      'creators-meta': [
+        'GET /api/creators-meta/search',
+        'GET /api/creators-meta/:creatorId',
+      ],
+      'creators-tiktok': [
+        'POST /api/creators-tiktok/sync',
+        'GET /api/creators-tiktok/sync/stats',
+        'GET /api/creators-tiktok/search',
+        'GET /api/creators-tiktok/:creatorId',
       ],
       health: [
         'GET /api/health',

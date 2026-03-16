@@ -10,14 +10,15 @@ import { ProductsModule } from './modules/products/products.module';
 import { SessionsModule } from './modules/sessions/sessions.module';
 import { AiModule } from './modules/ai/ai.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
-import { CreatorsModule } from './modules/creators/creators.module';
+import { CreatorsMetaModule } from './modules/creators-meta/creators-meta.module';
+import { CreatorsTikTokModule } from './modules/creators-tiktok/creators-tiktok.module';
 import { HealthController } from './health.controller';
 import { User } from './modules/users/entities/user.entity';
 import { Product } from './modules/products/entities/product.entity';
 import { UserProduct } from './modules/products/entities/user-product.entity';
 import { Session } from './modules/sessions/entities/session.entity';
 import { PasswordResetToken } from './modules/auth/entities/password-reset-token.entity';
-import { Creator } from './modules/creators/entities/creator.entity';
+import { Creator } from './common/entities/creator.entity';
 
 @Module({
   imports: [
@@ -51,7 +52,8 @@ import { Creator } from './modules/creators/entities/creator.entity';
     SessionsModule,
     AiModule,
     DashboardModule,
-    CreatorsModule,
+    CreatorsMetaModule,
+    CreatorsTikTokModule,
   ],
   controllers: [HealthController],
 })
