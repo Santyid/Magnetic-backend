@@ -56,6 +56,26 @@ export class ProposalProjection {
   @Column({ type: 'jsonb', nullable: true })
   recommendations?: string[];
 
+  // ROI
+  @Column({ name: 'earned_media_value', type: 'float', nullable: true })
+  earnedMediaValue?: number;
+
+  @Column({ name: 'cost_per_impression', type: 'float', nullable: true })
+  costPerImpression?: number;
+
+  @Column({ name: 'estimated_impressions', nullable: true })
+  estimatedImpressions?: number;
+
+  // Industry benchmarks
+  @Column({ name: 'industry_benchmark_er', type: 'float', nullable: true })
+  industryBenchmarkER?: number;
+
+  @Column({ name: 'er_vs_benchmark', type: 'float', nullable: true })
+  erVsBenchmark?: number;
+
+  @Column({ name: 'industry_label', nullable: true })
+  industryLabel?: string;
+
   @ManyToOne(() => Proposal, (proposal) => proposal.projections, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'proposal_id' })
   proposal: Proposal;
