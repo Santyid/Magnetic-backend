@@ -8,9 +8,27 @@ npm run start:dev        # Desarrollo con hot-reload (http://localhost:3000/api)
 npm run build            # Build produccion
 npm run seed:demo        # Seed: admin + demo (4 productos)
 npm run seed:custom      # Seed: user1-4 (0-3 productos)
-npm run test             # Tests unitarios
+npm run test             # Tests unitarios (12 suites, 137 tests)
 npm run test:cov         # Coverage
 ```
+
+## Unit Tests (Jest)
+12 suites, 137 tests. Todos los servicios tienen cobertura completa.
+
+| Suite | Archivo | Tests | Cobertura |
+|-------|---------|-------|-----------|
+| AuthService | `modules/auth/auth.service.spec.ts` | 15 | Login, register, refresh, logout, sessions, forgot/reset password |
+| UsersService | `modules/users/users.service.spec.ts` | 12 | CRUD, validacion password, duplicados, userProducts |
+| SessionsService | `modules/sessions/sessions.service.spec.ts` | 8 | CRUD tokens, cleanup expirados, delete all |
+| ProductsService | `modules/products/products.service.spec.ts` | 15 | CRUD, asignacion, credenciales, slug |
+| DashboardService | `modules/dashboard/dashboard.service.spec.ts` | 12 | Conexion/desconexion, metricas, estados |
+| AdvocatesConnector | `modules/dashboard/connectors/advocates.connector.spec.ts` | 8 | Auth, metricas, cache, errores |
+| AiService | `modules/ai/ai.service.spec.ts` | 7 | Chat, rate limit, competitors, proposals, brand analysis |
+| ProposalsService | `modules/proposals/proposals.service.spec.ts` | 11 | Create, findAll, findOne, status, remove, AI analysis |
+| AnalysisService | `modules/proposals/analysis.service.spec.ts` | 14 | Motor de reglas Adpro, benchmarks, advocacy score |
+| EncryptionService | `common/services/encryption.service.spec.ts` | 6 | Encrypt/decrypt AES-256-GCM |
+| CreatorsMetaService | `modules/creators-meta/creators-meta.service.spec.ts` | 7 | Search, profile, cache, rate limit |
+| CreatorsTiktokService | `modules/creators-tiktok/creators-tiktok.service.spec.ts` | 8 | Search DB, profile, sync, pagination |
 
 ## Module Structure
 ```

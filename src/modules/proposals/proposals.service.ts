@@ -1,6 +1,8 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, HttpException, HttpStatus } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, LessThan } from 'typeorm';
+import { Cron } from '@nestjs/schedule';
+import * as crypto from 'crypto';
 import { Proposal } from './entities/proposal.entity';
 import { ProposalCompany } from './entities/proposal-company.entity';
 import { ProposalProjection } from './entities/proposal-projection.entity';
@@ -11,12 +13,15 @@ import { TwitterScraper } from './scrapers/twitter.scraper';
 import { AnalysisService, PlatformData, ProjectionResult } from './analysis.service';
 import { AiService } from '../ai/ai.service';
 import { CreateProposalDto } from './dto/create-proposal.dto';
+import { CreateDemoProposalDto } from './dto/create-demo-proposal.dto';
 import { LinkedInScraper } from './scrapers/linkedin.scraper';
 import { ProposalEmployee } from './entities/proposal-employee.entity';
 
 @Injectable()
 export class ProposalsService {
   private readonly logger = new Logger(ProposalsService.name);
+  private readonly demoRateLimitMap = new Map<string, { count: number; resetAt: number }>();
+  private readonly DEMO_MAX_PER_DAY = 3;
 
   constructor(
     @InjectRepository(Proposal)
@@ -126,6 +131,127 @@ export class ProposalsService {
     await this.proposalRepo.update(id, { aiAnalysis: JSON.stringify(analysis) });
 
     return analysis;
+  }
+
+  // ─── Demo (público, sin auth) ─────────────────────────────────────────────
+
+  async createDemo(dto: CreateDemoProposalDto, ipAddress: string): Promise<Proposal> {
+    const ipHash = crypto.createHash('sha256').update(ipAddress).digest('hex').slice(0, 16);
+
+    // Rate limit por IP
+    const now = Date.now();
+    const entry = this.demoRateLimitMap.get(ipHash);
+    if (entry && now < entry.resetAt && entry.count >= this.DEMO_MAX_PER_DAY) {
+      const retryAfter = Math.ceil((entry.resetAt - now) / 1000);
+      throw new HttpException(
+        { statusCode: HttpStatus.TOO_MANY_REQUESTS, message: 'DEMO_RATE_LIMIT_EXCEEDED', retryAfter },
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+
+    // Actualizar contador
+    if (entry && now < entry.resetAt) {
+      entry.count += 1;
+    } else {
+      this.demoRateLimitMap.set(ipHash, { count: 1, resetAt: now + 24 * 60 * 60 * 1000 });
+    }
+
+    const proposal = this.proposalRepo.create({
+      adminUserId: `demo-${ipHash}`,
+      linkedinCompanyUrl: this.cleanLinkedInUrl(dto.linkedinCompanyUrl),
+      platforms: ['linkedin'],
+      status: 'pending',
+      isDemo: true,
+    });
+    await this.proposalRepo.save(proposal);
+
+    const fullDto: CreateProposalDto = {
+      linkedinCompanyUrl: dto.linkedinCompanyUrl,
+      platforms: ['linkedin'],
+    };
+    this.processProposal(proposal.id, fullDto).catch(
+      (err) => this.logger.error(`Demo proposal ${proposal.id} failed: ${err.message}`),
+    );
+
+    return proposal;
+  }
+
+  async findOneDemo(id: string): Promise<Record<string, unknown>> {
+    const proposal = await this.proposalRepo.findOne({
+      where: { id, isDemo: true },
+      relations: ['company', 'projections'],
+    });
+    if (!proposal) throw new NotFoundException('DEMO_PROPOSAL_NOT_FOUND');
+
+    // Redactar datos sensibles server-side
+    return {
+      id: proposal.id,
+      status: proposal.status,
+      progress: proposal.progress,
+      completedAt: proposal.completedAt,
+      errorMessage: proposal.errorMessage,
+      company: proposal.company ? {
+        name: proposal.company.name,
+        logo: proposal.company.logo,
+        industry: proposal.company.industry,
+        description: proposal.company.description,
+        headquarters: proposal.company.headquarters,
+        employeeCount: proposal.company.employeeCount,
+        followers: proposal.company.followers,
+        website: proposal.company.website,
+      } : null,
+      projections: proposal.projections?.map((p) => ({
+        platform: p.platform,
+        followers: p.followers,
+        currentAvgLikes: p.currentAvgLikes,
+        currentAvgComments: p.currentAvgComments,
+        currentER: p.currentER,
+        projectedLikes: p.projectedLikes,
+        projectedER: p.projectedER,
+        growthFactor: p.growthFactor,
+        classification: p.classification,
+        // Redactado:
+        recommendations: null,
+        ambassadorCount: null,
+        ambassadorFollowers: null,
+        earnedMediaValue: null,
+        costPerImpression: null,
+        estimatedImpressions: null,
+        potentialReach: null,
+        industryBenchmarkER: null,
+        erVsBenchmark: null,
+        industryLabel: null,
+      })) ?? [],
+      advocacyScore: proposal.advocacyScore ? { score: proposal.advocacyScore.score, breakdown: null } : null,
+      totalEarnedMedia: null,
+      competitors: null,
+      competitorAnalysis: null,
+      employees: null,
+    };
+  }
+
+  async getDemoStatus(id: string): Promise<{ status: string; progress: number; completedAt?: Date }> {
+    const proposal = await this.proposalRepo.findOne({
+      where: { id, isDemo: true },
+      select: ['id', 'status', 'progress', 'completedAt', 'errorMessage'],
+    });
+    if (!proposal) throw new NotFoundException('DEMO_PROPOSAL_NOT_FOUND');
+    return { status: proposal.status, progress: proposal.progress ?? 0, completedAt: proposal.completedAt };
+  }
+
+  @Cron('0 3 * * *')
+  async cleanupDemoProposals(): Promise<void> {
+    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const demos = await this.proposalRepo.find({
+      where: { isDemo: true, createdAt: LessThan(cutoff) },
+      relations: ['company', 'employees', 'projections'],
+    });
+    for (const demo of demos) {
+      await this.proposalRepo.remove(demo);
+    }
+    if (demos.length > 0) {
+      this.logger.log(`Cleaned up ${demos.length} demo proposals`);
+    }
   }
 
   // ─── Proceso principal (asíncrono) ───────────────────────────────────────
@@ -288,9 +414,14 @@ export class ProposalsService {
       await setProgress(80);
 
       // ── 9b. Competitor analysis (best-effort, does NOT block proposal) ──
+      // Skip for demo proposals to save API calls
+      const currentProposal = await this.proposalRepo.findOne({ where: { id: proposalId } });
       let competitors: any[] | null = null;
       let competitorAnalysisJson: string | undefined;
-      try {
+      if (currentProposal?.isDemo) {
+        this.logger.log(`[${proposalId}] Skipping competitor analysis for demo proposal`);
+        await setProgress(95);
+      } else try {
         const hq = company.headquarters ?? '';
         const country = hq.includes(',') ? hq.split(',').pop()!.trim() : (hq || 'Colombia');
 

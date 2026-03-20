@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule } from '@nestjs/config';
 import { ProposalsController } from './proposals.controller';
+import { DemoProposalsController } from './demo-proposals.controller';
 import { ProposalsService } from './proposals.service';
 import { AnalysisService } from './analysis.service';
 import { LinkedInScraper } from './scrapers/linkedin.scraper';
@@ -21,7 +22,7 @@ import { AiModule } from '../ai/ai.module';
     AiModule,
     TypeOrmModule.forFeature([Proposal, ProposalCompany, ProposalEmployee, ProposalProjection]),
   ],
-  controllers: [ProposalsController],
+  controllers: [ProposalsController, DemoProposalsController],
   providers: [ProposalsService, AnalysisService, LinkedInScraper, FacebookScraper, InstagramScraper, TikTokScraper, TwitterScraper],
 })
 export class ProposalsModule {}

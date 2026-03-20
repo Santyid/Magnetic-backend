@@ -80,6 +80,9 @@ export class Proposal {
   @Column({ name: 'competitor_analysis', type: 'text', nullable: true })
   competitorAnalysis?: string;
 
+  @Column({ name: 'is_demo', default: false })
+  isDemo: boolean;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 

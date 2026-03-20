@@ -8,6 +8,9 @@ async function bootstrap() {
 
   const configService = app.get(ConfigService);
 
+  // Trust proxy para obtener IP real en Railway (X-Forwarded-For)
+  app.getHttpAdapter().getInstance().set('trust proxy', true);
+
   // Configurar CORS
   app.enableCors({
     origin: configService.get('cors.origin'),
