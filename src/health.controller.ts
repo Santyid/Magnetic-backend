@@ -171,6 +171,20 @@ export class HealthController {
         'GET /api/creators-tiktok/search',
         'GET /api/creators-tiktok/:creatorId',
       ],
+      proposals: [
+        'POST /api/proposals',
+        'GET /api/proposals',
+        'GET /api/proposals/:id',
+        'GET /api/proposals/:id/status',
+        'DELETE /api/proposals/:id',
+        'POST /api/proposals/:id/ai-analysis',
+        'GET /api/proposals/image-proxy',
+      ],
+      'demo-proposals': [
+        'POST /api/demo/proposals',
+        'GET /api/demo/proposals/:id',
+        'GET /api/demo/proposals/:id/status',
+      ],
       health: [
         'GET /api/health',
       ],

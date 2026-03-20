@@ -32,6 +32,9 @@ export class Proposal {
   @Column({ default: 'pending' })
   status: ProposalStatus;
 
+  @Column({ type: 'int', default: 0 })
+  progress: number;
+
   @Column({ name: 'error_message', nullable: true })
   errorMessage?: string;
 
@@ -40,6 +43,45 @@ export class Proposal {
 
   @Column({ name: 'ai_analysis', type: 'text', nullable: true })
   aiAnalysis?: string;
+
+  @Column({ name: 'company_name', nullable: true })
+  companyName?: string;
+
+  // Advocacy Readiness Score (0-100)
+  @Column({ name: 'advocacy_score', type: 'jsonb', nullable: true })
+  advocacyScore?: { score: number; breakdown: { category: string; score: number; maxScore: number; description: string }[] };
+
+  // Total ROI across all platforms (monthly)
+  @Column({ name: 'total_earned_media', type: 'float', nullable: true })
+  totalEarnedMedia?: number;
+
+  // Competitor analysis data
+  @Column({ type: 'jsonb', nullable: true })
+  competitors?: {
+    name: string;
+    slug: string;
+    logo: string;
+    followers: number;
+    employeeCount: number;
+    industry: string;
+    website: string;
+    headquarters: string;
+    engagement: {
+      avgLikes: number;
+      avgComments: number;
+      avgReposts: number;
+      postCount: number;
+      engagementRate: number;
+      postsPerMonth: number;
+    };
+  }[] | null;
+
+  // AI-generated competitive brand analysis
+  @Column({ name: 'competitor_analysis', type: 'text', nullable: true })
+  competitorAnalysis?: string;
+
+  @Column({ name: 'is_demo', default: false })
+  isDemo: boolean;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

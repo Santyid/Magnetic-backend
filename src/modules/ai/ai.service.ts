@@ -181,6 +181,103 @@ Información de los productos:
   }
 
   /**
+   * Identifies 3-4 main competitors for a company via OpenAI,
+   * returning their LinkedIn company page slugs.
+   */
+  async identifyCompetitors(
+    companyName: string,
+    industry: string,
+    country: string,
+  ): Promise<string[]> {
+    const model = this.configService.get<string>('openai.model') || 'gpt-4o-mini';
+
+    const completion = await this.openai.chat.completions.create({
+      model,
+      messages: [
+        {
+          role: 'system',
+          content:
+            'You are a business analyst expert in LinkedIn. Given a company name, industry, and country, return the EXACT LinkedIn company page slugs of 5-6 direct competitors. The slug is the part after linkedin.com/company/ in the company\'s LinkedIn URL. IMPORTANT: Use the real, verified LinkedIn slug — typically lowercase with hyphens (e.g. "banco-de-bogota", "davivienda", "bbva-colombia", "grupo-aval"). Do NOT guess or make up slugs. Only include companies you are confident have a LinkedIn page with that exact slug. Return ONLY a JSON object: {"slugs":["slug1","slug2","slug3","slug4","slug5"]}',
+        },
+        {
+          role: 'user',
+          content: `Company: ${companyName}\nIndustry: ${industry}\nCountry: ${country}`,
+        },
+      ],
+      max_tokens: 300,
+      temperature: 0.3,
+      response_format: { type: 'json_object' },
+    });
+
+    const content = completion.choices[0]?.message?.content ?? '{}';
+    const parsed = JSON.parse(content);
+    return Array.isArray(parsed.slugs) ? parsed.slugs : [];
+  }
+
+  /**
+   * Generates a competitive brand evaluation comparing the company
+   * against its competitors using real engagement data.
+   */
+  async analyzeCompetitorBrand(data: {
+    company: { name: string; followers: number; employeeCount: number; industry: string; engagement: { avgLikes: number; avgComments: number; engagementRate: number; postsPerMonth: number } };
+    competitors: { name: string; followers: number; employeeCount: number; industry: string; engagement: { avgLikes: number; avgComments: number; engagementRate: number; postsPerMonth: number } }[];
+  }): Promise<Record<string, unknown>> {
+    const model = this.configService.get<string>('openai.model') || 'gpt-4o-mini';
+
+    const systemPrompt = `Eres un analista senior de marca y comunicación digital. Analiza los datos reales de engagement de LinkedIn de una empresa y sus competidores directos para generar una evaluación competitiva de marca.
+
+Responde ÚNICAMENTE con JSON válido (sin markdown) con esta estructura:
+{
+  "brandPosition": "1-2 oraciones describiendo la posición competitiva actual de la marca en LinkedIn vs sus competidores",
+  "strengths": ["Fortaleza 1 con dato real", "Fortaleza 2 con dato real"],
+  "weaknesses": ["Debilidad 1 con dato real", "Debilidad 2 con dato real"],
+  "opportunities": ["Oportunidad 1 específica y accionable", "Oportunidad 2 específica y accionable"],
+  "competitorInsights": [
+    {
+      "name": "Nombre competidor",
+      "verdict": "1 oración sobre qué hace bien o mal este competidor comparado con la empresa"
+    }
+  ],
+  "recommendation": "2-3 oraciones con la recomendación estratégica principal, mencionando cómo Employee Advocacy (Adpro) puede cerrar brechas identificadas"
+}
+
+Sé específico con los datos. Usa cifras reales de engagement rate, frecuencia de publicación, y tamaño de audiencia para fundamentar cada punto.`;
+
+    const companyLine = `EMPRESA: ${data.company.name}
+- Seguidores: ${data.company.followers.toLocaleString('es')}
+- Empleados: ${data.company.employeeCount.toLocaleString('es')}
+- Industria: ${data.company.industry}
+- Engagement Rate: ${data.company.engagement.engagementRate}%
+- Likes promedio/post: ${data.company.engagement.avgLikes}
+- Comentarios promedio/post: ${data.company.engagement.avgComments}
+- Publicaciones/mes: ${data.company.engagement.postsPerMonth}`;
+
+    const competitorLines = data.competitors.map((c) =>
+      `COMPETIDOR: ${c.name}
+- Seguidores: ${c.followers.toLocaleString('es')}
+- Empleados: ${c.employeeCount.toLocaleString('es')}
+- Industria: ${c.industry}
+- Engagement Rate: ${c.engagement.engagementRate}%
+- Likes promedio/post: ${c.engagement.avgLikes}
+- Comentarios promedio/post: ${c.engagement.avgComments}
+- Publicaciones/mes: ${c.engagement.postsPerMonth}`).join('\n\n');
+
+    const completion = await this.openai.chat.completions.create({
+      model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: `${companyLine}\n\n${competitorLines}\n\nGenera la evaluación competitiva en español.` },
+      ],
+      max_tokens: 1200,
+      temperature: 0.6,
+      response_format: { type: 'json_object' },
+    });
+
+    const content = completion.choices[0]?.message?.content ?? '{}';
+    return JSON.parse(content);
+  }
+
+  /**
    * Genera un análisis comercial de una propuesta para vender Adpro
    */
   async analyzeProposal(proposal: {

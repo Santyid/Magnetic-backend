@@ -1,6 +1,8 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, HttpException, HttpStatus } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, LessThan } from 'typeorm';
+import { Cron } from '@nestjs/schedule';
+import * as crypto from 'crypto';
 import { Proposal } from './entities/proposal.entity';
 import { ProposalCompany } from './entities/proposal-company.entity';
 import { ProposalProjection } from './entities/proposal-projection.entity';
@@ -8,15 +10,18 @@ import { FacebookScraper } from './scrapers/facebook.scraper';
 import { InstagramScraper } from './scrapers/instagram.scraper';
 import { TikTokScraper } from './scrapers/tiktok.scraper';
 import { TwitterScraper } from './scrapers/twitter.scraper';
-import { AnalysisService, PlatformData } from './analysis.service';
+import { AnalysisService, PlatformData, ProjectionResult } from './analysis.service';
 import { AiService } from '../ai/ai.service';
 import { CreateProposalDto } from './dto/create-proposal.dto';
+import { CreateDemoProposalDto } from './dto/create-demo-proposal.dto';
 import { LinkedInScraper } from './scrapers/linkedin.scraper';
 import { ProposalEmployee } from './entities/proposal-employee.entity';
 
 @Injectable()
 export class ProposalsService {
   private readonly logger = new Logger(ProposalsService.name);
+  private readonly demoRateLimitMap = new Map<string, { count: number; resetAt: number }>();
+  private readonly DEMO_MAX_PER_DAY = 3;
 
   constructor(
     @InjectRepository(Proposal)
@@ -85,14 +90,14 @@ export class ProposalsService {
     return proposal;
   }
 
-  async getStatus(id: string, adminUserId: string): Promise<{ status: string; completedAt?: Date }> {
+  async getStatus(id: string, adminUserId: string): Promise<{ status: string; progress: number; completedAt?: Date }> {
     const proposal = await this.proposalRepo.findOne({
       where: { id, adminUserId },
-      select: ['id', 'status', 'completedAt', 'errorMessage'],
+      select: ['id', 'status', 'progress', 'completedAt', 'errorMessage'],
     });
 
     if (!proposal) throw new NotFoundException('PROPOSAL_NOT_FOUND');
-    return { status: proposal.status, completedAt: proposal.completedAt };
+    return { status: proposal.status, progress: proposal.progress ?? 0, completedAt: proposal.completedAt };
   }
 
   async remove(id: string, adminUserId: string): Promise<void> {
@@ -128,19 +133,143 @@ export class ProposalsService {
     return analysis;
   }
 
+  // ─── Demo (público, sin auth) ─────────────────────────────────────────────
+
+  async createDemo(dto: CreateDemoProposalDto, ipAddress: string): Promise<Proposal> {
+    const ipHash = crypto.createHash('sha256').update(ipAddress).digest('hex').slice(0, 16);
+
+    // Rate limit por IP
+    const now = Date.now();
+    const entry = this.demoRateLimitMap.get(ipHash);
+    if (entry && now < entry.resetAt && entry.count >= this.DEMO_MAX_PER_DAY) {
+      const retryAfter = Math.ceil((entry.resetAt - now) / 1000);
+      throw new HttpException(
+        { statusCode: HttpStatus.TOO_MANY_REQUESTS, message: 'DEMO_RATE_LIMIT_EXCEEDED', retryAfter },
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+
+    // Actualizar contador
+    if (entry && now < entry.resetAt) {
+      entry.count += 1;
+    } else {
+      this.demoRateLimitMap.set(ipHash, { count: 1, resetAt: now + 24 * 60 * 60 * 1000 });
+    }
+
+    const proposal = this.proposalRepo.create({
+      adminUserId: `demo-${ipHash}`,
+      linkedinCompanyUrl: this.cleanLinkedInUrl(dto.linkedinCompanyUrl),
+      platforms: ['linkedin'],
+      status: 'pending',
+      isDemo: true,
+    });
+    await this.proposalRepo.save(proposal);
+
+    const fullDto: CreateProposalDto = {
+      linkedinCompanyUrl: dto.linkedinCompanyUrl,
+      platforms: ['linkedin'],
+    };
+    this.processProposal(proposal.id, fullDto).catch(
+      (err) => this.logger.error(`Demo proposal ${proposal.id} failed: ${err.message}`),
+    );
+
+    return proposal;
+  }
+
+  async findOneDemo(id: string): Promise<Record<string, unknown>> {
+    const proposal = await this.proposalRepo.findOne({
+      where: { id, isDemo: true },
+      relations: ['company', 'projections'],
+    });
+    if (!proposal) throw new NotFoundException('DEMO_PROPOSAL_NOT_FOUND');
+
+    // Redactar datos sensibles server-side
+    return {
+      id: proposal.id,
+      status: proposal.status,
+      progress: proposal.progress,
+      completedAt: proposal.completedAt,
+      errorMessage: proposal.errorMessage,
+      company: proposal.company ? {
+        name: proposal.company.name,
+        logo: proposal.company.logo,
+        industry: proposal.company.industry,
+        description: proposal.company.description,
+        headquarters: proposal.company.headquarters,
+        employeeCount: proposal.company.employeeCount,
+        followers: proposal.company.followers,
+        website: proposal.company.website,
+      } : null,
+      projections: proposal.projections?.map((p) => ({
+        platform: p.platform,
+        followers: p.followers,
+        currentAvgLikes: p.currentAvgLikes,
+        currentAvgComments: p.currentAvgComments,
+        currentER: p.currentER,
+        projectedLikes: p.projectedLikes,
+        projectedER: p.projectedER,
+        growthFactor: p.growthFactor,
+        classification: p.classification,
+        // Redactado:
+        recommendations: null,
+        ambassadorCount: null,
+        ambassadorFollowers: null,
+        earnedMediaValue: null,
+        costPerImpression: null,
+        estimatedImpressions: null,
+        potentialReach: null,
+        industryBenchmarkER: null,
+        erVsBenchmark: null,
+        industryLabel: null,
+      })) ?? [],
+      advocacyScore: proposal.advocacyScore ? { score: proposal.advocacyScore.score, breakdown: null } : null,
+      totalEarnedMedia: null,
+      competitors: null,
+      competitorAnalysis: null,
+      employees: null,
+    };
+  }
+
+  async getDemoStatus(id: string): Promise<{ status: string; progress: number; completedAt?: Date }> {
+    const proposal = await this.proposalRepo.findOne({
+      where: { id, isDemo: true },
+      select: ['id', 'status', 'progress', 'completedAt', 'errorMessage'],
+    });
+    if (!proposal) throw new NotFoundException('DEMO_PROPOSAL_NOT_FOUND');
+    return { status: proposal.status, progress: proposal.progress ?? 0, completedAt: proposal.completedAt };
+  }
+
+  @Cron('0 3 * * *')
+  async cleanupDemoProposals(): Promise<void> {
+    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const demos = await this.proposalRepo.find({
+      where: { isDemo: true, createdAt: LessThan(cutoff) },
+      relations: ['company', 'employees', 'projections'],
+    });
+    for (const demo of demos) {
+      await this.proposalRepo.remove(demo);
+    }
+    if (demos.length > 0) {
+      this.logger.log(`Cleaned up ${demos.length} demo proposals`);
+    }
+  }
+
   // ─── Proceso principal (asíncrono) ───────────────────────────────────────
 
   private async processProposal(proposalId: string, dto: CreateProposalDto): Promise<void> {
-    await this.proposalRepo.update(proposalId, { status: 'processing' });
+    await this.proposalRepo.update(proposalId, { status: 'processing', progress: 0 });
     const platforms = dto.platforms?.length ? dto.platforms : [];
+    const setProgress = (pct: number) => this.proposalRepo.update(proposalId, { progress: pct });
 
     try {
       // ── 0. Limpiar URL de LinkedIn ──────────────────────────────────────
       const cleanUrl = this.cleanLinkedInUrl(dto.linkedinCompanyUrl);
 
       // ── 1. LinkedIn (scraper real via RapidAPI) ────────────────────────
+      await setProgress(5);
       const liData = await this.linkedInScraper.getCompany(cleanUrl);
       this.logger.log(`[${proposalId}] LinkedIn scraped: ${liData.name} (${liData.followers} followers, ${liData.employees.length} employees)`);
+      await setProgress(15);
 
       // ── 2. Guardar empresa ───────────────────────────────────────────────
       const company = this.companyRepo.create({
@@ -160,18 +289,35 @@ export class ProposalsService {
       // ── 2b. Guardar empleados + obtener followers ─────────────────────
       let ambassadorCount = 0;
       let ambassadorFollowers = 0;
+      let scrapedWithFollowers = 0;
 
       if (liData.employees.length > 0) {
-        const top20 = liData.employees.slice(0, 20);
+        // Guardar hasta 100 empleados en BD
+        const MAX_EMPLOYEES_SAVED = 100;
+        const allEmployees = liData.employees.slice(0, MAX_EMPLOYEES_SAVED);
+
+        // Llamados API para followers: ≤5 → todos; >5 → 10%, máximo 5
+        // Limited to 5 to stay within 20 req/min RapidAPI rate limit
+        const MAX_FOLLOWER_CALLS = 5;
+        const callCount = allEmployees.length <= MAX_FOLLOWER_CALLS
+          ? allEmployees.length
+          : Math.min(Math.ceil(allEmployees.length * 0.1), MAX_FOLLOWER_CALLS);
+
+        // Consultar followers solo para los primeros `callCount`
+        const employeesToScrape = allEmployees.slice(0, callCount);
         const followerResults = await Promise.allSettled(
-          top20.map((e) => this.linkedInScraper.getEmployeeFollowers(e.publicIdentifier)),
+          employeesToScrape.map((e) => this.linkedInScraper.getEmployeeFollowers(e.publicIdentifier)),
         );
 
+        // Crear entidades: los scrapeados con followers reales, el resto con 0
         const employeeEntities: ProposalEmployee[] = [];
-        for (let i = 0; i < top20.length; i++) {
-          const emp = top20[i];
-          const result = followerResults[i];
-          const followers = result.status === 'fulfilled' ? result.value : 0;
+        for (let i = 0; i < allEmployees.length; i++) {
+          const emp = allEmployees[i];
+          let followers = 0;
+          if (i < callCount) {
+            const result = followerResults[i];
+            followers = result.status === 'fulfilled' ? result.value : 0;
+          }
           ambassadorFollowers += followers;
 
           employeeEntities.push(this.employeeRepo.create({
@@ -187,58 +333,197 @@ export class ProposalsService {
 
         await this.employeeRepo.save(employeeEntities);
         ambassadorCount = employeeEntities.length;
+        scrapedWithFollowers = callCount;
         this.logger.log(`[${proposalId}] Saved ${ambassadorCount} employees, total followers: ${ambassadorFollowers}`);
       }
 
-      // ── 3. Proyección LinkedIn (solo si tiene datos y está en platforms) ──
+      await setProgress(30);
+
+      // ── 3. Industry para benchmarks ───────────────────────────────────
+      const industry = liData.industry ?? undefined;
+      const projectionResults: ProjectionResult[] = [];
+
+      // ── 4. Proyección LinkedIn (solo si tiene datos y está en platforms) ──
       if (platforms.includes('linkedin') && liData.followers > 0) {
-        await this.saveProjection(proposalId, {
+        const result = await this.saveProjection(proposalId, {
           platform: 'linkedin',
           followers: liData.followers,
           posts: liData.posts.map((p) => ({ likes: p.likes, comments: p.comments, reposts: p.reposts })),
           ambassadorCount,
           ambassadorFollowers,
-        });
+        }, industry);
+        projectionResults.push(result);
       }
 
-      // ── 4. Facebook (opcional) ───────────────────────────────────────────
+      await setProgress(40);
+
+      // ── 5. Facebook (opcional) ───────────────────────────────────────────
       if (platforms.includes('facebook') && dto.facebookUrl) {
-        await this.processFacebook(
+        const result = await this.processFacebook(
           proposalId, company, dto.facebookUrl,
-          ambassadorCount, ambassadorFollowers,
+          ambassadorCount, ambassadorFollowers, industry,
         );
+        if (result) projectionResults.push(result);
       }
 
-      // ── 5. Instagram (opcional) ──────────────────────────────────────────
+      await setProgress(50);
+
+      // ── 6. Instagram (opcional) ──────────────────────────────────────────
       this.logger.log(`[${proposalId}] Instagram check: platforms=${JSON.stringify(platforms)}, handle="${dto.instagramHandle}"`);
       if (platforms.includes('instagram') && dto.instagramHandle) {
-        await this.processInstagram(
+        const result = await this.processInstagram(
           proposalId, company, dto.instagramHandle,
-          ambassadorCount, ambassadorFollowers,
+          ambassadorCount, ambassadorFollowers, industry,
         );
+        if (result) projectionResults.push(result);
       }
 
-      // ── 6. TikTok (opcional) ─────────────────────────────────────────────
+      await setProgress(60);
+
+      // ── 7. TikTok (opcional) ─────────────────────────────────────────────
       if (platforms.includes('tiktok') && dto.tiktokHandle) {
-        await this.processTikTok(
+        const result = await this.processTikTok(
           proposalId, company, dto.tiktokHandle,
-          ambassadorCount, ambassadorFollowers,
+          ambassadorCount, ambassadorFollowers, industry,
         );
+        if (result) projectionResults.push(result);
       }
 
-      // ── 7. Twitter/X (opcional) ──────────────────────────────────────────
+      await setProgress(65);
+
+      // ── 8. Twitter/X (opcional) ──────────────────────────────────────────
       if (platforms.includes('twitter') && dto.twitterHandle) {
-        await this.processTwitter(
+        const result = await this.processTwitter(
           proposalId, company, dto.twitterHandle,
-          ambassadorCount, ambassadorFollowers,
+          ambassadorCount, ambassadorFollowers, industry,
         );
+        if (result) projectionResults.push(result);
       }
 
-      // ── 8. Completado ────────────────────────────────────────────────────
-      await this.proposalRepo.update(proposalId, {
-        status: 'done',
-        completedAt: new Date(),
-      });
+      await setProgress(70);
+
+      // ── 9. Advocacy Score + Total ROI ─────────────────────────────────
+      const employees = await this.employeeRepo.find({ where: { proposalId } });
+      const advocacyScore = this.analysisService.calculateAdvocacyScore(
+        projectionResults, employees.length, ambassadorFollowers, liData.followers, liData.employee_count, scrapedWithFollowers,
+      );
+      const totalEarnedMedia = projectionResults.reduce((sum, p) => sum + p.earnedMediaValue, 0);
+
+      this.logger.log(`[${proposalId}] Advocacy score: ${advocacyScore.score}, Total earned media: $${totalEarnedMedia}`);
+
+      await setProgress(80);
+
+      // ── 9b. Competitor analysis (best-effort, does NOT block proposal) ──
+      // Skip for demo proposals to save API calls
+      const currentProposal = await this.proposalRepo.findOne({ where: { id: proposalId } });
+      let competitors: any[] | null = null;
+      let competitorAnalysisJson: string | undefined;
+      if (currentProposal?.isDemo) {
+        this.logger.log(`[${proposalId}] Skipping competitor analysis for demo proposal`);
+        await setProgress(95);
+      } else try {
+        const hq = company.headquarters ?? '';
+        const country = hq.includes(',') ? hq.split(',').pop()!.trim() : (hq || 'Colombia');
+
+        // Extract own company slug to exclude from competitors
+        const ownSlugMatch = cleanUrl.match(/linkedin\.com\/company\/([^/?#]+)/);
+        const ownSlug = ownSlugMatch ? ownSlugMatch[1].toLowerCase() : '';
+
+        const slugs = await this.aiService.identifyCompetitors(
+          company.name, liData.industry, country,
+        );
+
+        // Filter out the company's own slug
+        const filteredSlugs = slugs.filter((s) => s.toLowerCase() !== ownSlug);
+        this.logger.log(`[${proposalId}] AI identified ${slugs.length} slugs, ${filteredSlugs.length} after filtering self (${ownSlug}): ${filteredSlugs.join(', ')}`);
+
+        if (filteredSlugs.length > 0) {
+          // Cooldown: wait 3s for RapidAPI rate limit to recover after main company scraping
+          this.logger.log(`[${proposalId}] Waiting 3s before competitor fetching (rate limit cooldown)...`);
+          await new Promise((resolve) => setTimeout(resolve, 3000));
+
+          // Fetch profiles + posts sequentially to avoid rate limiting
+          competitors = [];
+          for (const slug of filteredSlugs) {
+            try {
+              const profile = await this.linkedInScraper.getCompanyProfile(slug);
+              competitors.push({ ...profile, slug });
+              this.logger.log(`[${proposalId}] Competitor ${slug}: ${profile.name} (${profile.followers} followers, ER: ${profile.engagement.engagementRate}%)`);
+            } catch (err) {
+              const httpStatus = err?.response?.status ?? err?.status ?? 'unknown';
+              this.logger.warn(`[${proposalId}] Competitor ${slug} failed [${httpStatus}]: ${err.message}`);
+            }
+            // Delay between competitors (1 API call each: profile only)
+            await new Promise((resolve) => setTimeout(resolve, 1500));
+          }
+          this.logger.log(`[${proposalId}] Fetched ${competitors.length}/${slugs.length} competitor profiles`);
+
+          // Calculate company's own engagement from LinkedIn posts
+          const companyPosts = liData.posts ?? [];
+          let companyEngagement = { avgLikes: 0, avgComments: 0, engagementRate: 0, postsPerMonth: 0 };
+          if (companyPosts.length > 0) {
+            const totalL = companyPosts.reduce((s, p) => s + (p.likes ?? 0), 0);
+            const totalC = companyPosts.reduce((s, p) => s + (p.comments ?? 0), 0);
+            const totalR = companyPosts.reduce((s, p) => s + (p.reposts ?? 0), 0);
+            companyEngagement.avgLikes = Math.round(totalL / companyPosts.length);
+            companyEngagement.avgComments = Math.round(totalC / companyPosts.length);
+            const totalInt = totalL + totalC + totalR;
+            companyEngagement.engagementRate = liData.followers > 0
+              ? parseFloat(((totalInt / companyPosts.length / liData.followers) * 100).toFixed(2))
+              : 0;
+            companyEngagement.postsPerMonth = companyPosts.length; // approx from 1 page
+          }
+
+          // AI brand evaluation with real engagement data
+          if (competitors.length > 0) {
+            try {
+              const brandAnalysis = await this.aiService.analyzeCompetitorBrand({
+                company: {
+                  name: company.name,
+                  followers: liData.followers,
+                  employeeCount: liData.employee_count,
+                  industry: liData.industry,
+                  engagement: companyEngagement,
+                },
+                competitors: competitors.map((c) => ({
+                  name: c.name,
+                  followers: c.followers,
+                  employeeCount: c.employeeCount,
+                  industry: c.industry,
+                  engagement: {
+                    avgLikes: c.engagement?.avgLikes ?? 0,
+                    avgComments: c.engagement?.avgComments ?? 0,
+                    engagementRate: c.engagement?.engagementRate ?? 0,
+                    postsPerMonth: c.engagement?.postsPerMonth ?? 0,
+                  },
+                })),
+              });
+              competitorAnalysisJson = JSON.stringify(brandAnalysis);
+              this.logger.log(`[${proposalId}] AI brand analysis generated`);
+            } catch (aiErr) {
+              this.logger.warn(`[${proposalId}] AI brand analysis failed (non-fatal): ${aiErr.message}`);
+            }
+          }
+        }
+      } catch (err) {
+        this.logger.warn(`[${proposalId}] Competitor analysis failed (non-fatal): ${err.message}`);
+      }
+
+      await setProgress(95);
+
+      // ── 10. Completado ───────────────────────────────────────────────────
+      const proposal = await this.proposalRepo.findOne({ where: { id: proposalId } });
+      if (proposal) {
+        proposal.status = 'done';
+        proposal.progress = 100;
+        proposal.completedAt = new Date();
+        proposal.companyName = company.name;
+        proposal.advocacyScore = advocacyScore;
+        proposal.totalEarnedMedia = totalEarnedMedia;
+        proposal.competitors = competitors;
+        proposal.competitorAnalysis = competitorAnalysisJson;
+        await this.proposalRepo.save(proposal);
+      }
 
       this.logger.log(`[${proposalId}] Proposal completed successfully`);
     } catch (error) {
@@ -258,7 +543,8 @@ export class ProposalsService {
     facebookUrl: string,
     ambassadorCount: number,
     ambassadorFollowers: number,
-  ): Promise<void> {
+    industry?: string,
+  ): Promise<ProjectionResult | null> {
     this.logger.log(`[${proposalId}] Fetching Facebook: ${facebookUrl}`);
     try {
       const fbData = await this.facebookScraper.scrape(facebookUrl);
@@ -286,15 +572,16 @@ export class ProposalsService {
           ? Math.max(...fbData.posts.map((p) => p.reactions_count)) * 20
           : 1000;
 
-      await this.saveProjection(proposalId, {
+      return await this.saveProjection(proposalId, {
         platform: 'facebook',
         followers: projectionFollowers,
         posts: fbData.posts.map((p) => ({ likes: p.likes, comments: p.comments, reposts: p.reposts })),
         ambassadorCount,
         ambassadorFollowers,
-      });
+      }, industry);
     } catch (error) {
       this.logger.warn(`[${proposalId}] Facebook failed (non-fatal): ${error.message}`);
+      return null;
     }
   }
 
@@ -306,7 +593,8 @@ export class ProposalsService {
     instagramHandle: string,
     ambassadorCount: number,
     ambassadorFollowers: number,
-  ): Promise<void> {
+    industry?: string,
+  ): Promise<ProjectionResult | null> {
     this.logger.log(`[${proposalId}] Fetching Instagram: ${instagramHandle}`);
     try {
       const igData = await this.instagramScraper.scrape(instagramHandle);
@@ -318,13 +606,13 @@ export class ProposalsService {
       this.logger.log(`[${proposalId}] Company found: id=${company.id}`);
 
       // Guardar proyección PRIMERO (antes del UPDATE con JSON grande que trunca logs)
-      await this.saveProjection(proposalId, {
+      const projResult = await this.saveProjection(proposalId, {
         platform: 'instagram',
         followers: igData.followers,
         posts: igData.posts.map((p) => ({ likes: p.likes, comments: p.comments, reposts: p.reposts ?? 0 })),
         ambassadorCount,
         ambassadorFollowers,
-      });
+      }, industry);
       this.logger.log(`[${proposalId}] Instagram projection saved OK`);
 
       const igDataToSave = {
@@ -345,10 +633,13 @@ export class ProposalsService {
       } catch (saveErr) {
         this.logger.error(`[${proposalId}] Instagram data SAVE FAILED: ${saveErr.message}`);
       }
+
+      return projResult;
     } catch (error) {
       const status = error?.response?.status ?? 'no-http';
       const body = JSON.stringify(error?.response?.data ?? {});
       this.logger.warn(`[${proposalId}] Instagram failed (non-fatal): ${error.message} | status=${status} | body=${body}`);
+      return null;
     }
   }
 
@@ -360,7 +651,8 @@ export class ProposalsService {
     twitterHandle: string,
     ambassadorCount: number,
     ambassadorFollowers: number,
-  ): Promise<void> {
+    industry?: string,
+  ): Promise<ProjectionResult | null> {
     this.logger.log(`[${proposalId}] Fetching Twitter: ${twitterHandle}`);
     try {
       const twData = await this.twitterScraper.scrape(twitterHandle);
@@ -385,17 +677,18 @@ export class ProposalsService {
         [JSON.stringify(twDataToSave, this.sanitizeForJsonb), company.id],
       );
 
-      await this.saveProjection(proposalId, {
+      return await this.saveProjection(proposalId, {
         platform: 'twitter',
         followers: twData.followers,
         posts: twData.posts.map((p) => ({ likes: p.likes, comments: p.comments, reposts: p.reposts })),
         ambassadorCount,
         ambassadorFollowers,
-      });
+      }, industry);
     } catch (error) {
       const status = error?.response?.status ?? 'no-http';
       const body = JSON.stringify(error?.response?.data ?? {});
       this.logger.warn(`[${proposalId}] Twitter failed (non-fatal): ${error.message} | status=${status} | body=${body}`);
+      return null;
     }
   }
 
@@ -407,7 +700,8 @@ export class ProposalsService {
     tiktokHandle: string,
     ambassadorCount: number,
     ambassadorFollowers: number,
-  ): Promise<void> {
+    industry?: string,
+  ): Promise<ProjectionResult | null> {
     this.logger.log(`[${proposalId}] Fetching TikTok: ${tiktokHandle}`);
     try {
       const ttData = await this.tiktokScraper.scrape(tiktokHandle);
@@ -429,28 +723,30 @@ export class ProposalsService {
         [JSON.stringify(ttDataToSave, this.sanitizeForJsonb), company.id],
       );
 
-      await this.saveProjection(proposalId, {
+      return await this.saveProjection(proposalId, {
         platform: 'tiktok',
         followers: ttData.followers,
         posts: ttData.posts.map((p) => ({ likes: p.likes, comments: p.comments, reposts: p.reposts })),
         ambassadorCount,
         ambassadorFollowers,
-      });
+      }, industry);
     } catch (error) {
       this.logger.warn(`[${proposalId}] TikTok failed (non-fatal): ${error.message}`);
+      return null;
     }
   }
 
   // ─── Helpers ──────────────────────────────────────────────────────────────
 
-  private async saveProjection(proposalId: string, data: PlatformData): Promise<void> {
+  private async saveProjection(proposalId: string, data: PlatformData, industry?: string): Promise<ProjectionResult> {
     try {
       this.logger.log(`[${proposalId}] saveProjection START: platform=${data.platform}`);
-      const projection = this.analysisService.calculate(data);
+      const projection = this.analysisService.calculate(data, industry);
       this.logger.log(`[${proposalId}] saveProjection CALC OK: ${projection.classification}`);
       const entity = this.projectionRepo.create({ proposalId, ...projection });
       await this.projectionRepo.save(entity);
       this.logger.log(`[${proposalId}] saveProjection SAVED OK`);
+      return projection;
     } catch (err) {
       this.logger.error(`[${proposalId}] saveProjection FAILED: ${err.message}`, err.stack);
       throw err;

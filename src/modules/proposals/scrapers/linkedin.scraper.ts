@@ -37,32 +37,54 @@ export class LinkedInScraper {
 
       const companyId = profile.id;
 
-      // Step 2: Posts + people (pages 1 and 2) in parallel
-      const [postsRes, people1Res, people2Res] = await Promise.allSettled([
+      // Step 2: Posts (parallel) + people pages (batches of 3 to avoid rate limit)
+      // Max 3 pages of employees (30 employees) to stay within 20 req/min rate limit
+      const EMPLOYEES_PER_PAGE = 10;
+      const MAX_EMPLOYEE_PAGES = 3;
+      const MAX_EMPLOYEES = MAX_EMPLOYEE_PAGES * EMPLOYEES_PER_PAGE;
+      const employeeCount = profile.employee_count ?? 0;
+      const pagesNeeded = Math.min(
+        Math.ceil(Math.min(employeeCount, MAX_EMPLOYEES) / EMPLOYEES_PER_PAGE),
+        MAX_EMPLOYEE_PAGES,
+      ) || 1;
+
+      // Posts in parallel with first batch of people
+      const postsRes = await Promise.allSettled([
         this.client.get('/api/v1/company/posts', {
           params: { company_id: companyId, page: 1 },
         }),
-        this.client.get('/api/v1/company/people', {
-          params: { company_id: companyId, page: 1 },
-        }),
-        this.client.get('/api/v1/company/people', {
-          params: { company_id: companyId, page: 2 },
-        }),
       ]);
-
       const rawPosts =
-        postsRes.status === 'fulfilled'
-          ? (postsRes.value.data?.data ?? [])
+        postsRes[0].status === 'fulfilled'
+          ? (postsRes[0].value.data?.data ?? [])
           : [];
-      const rawPeople1 =
-        people1Res.status === 'fulfilled'
-          ? (people1Res.value.data?.data ?? [])
-          : [];
-      const rawPeople2 =
-        people2Res.status === 'fulfilled'
-          ? (people2Res.value.data?.data ?? [])
-          : [];
-      const rawPeople = [...rawPeople1, ...rawPeople2];
+
+      // People pages in batches of 3 with small delay between batches
+      const BATCH_SIZE = 3;
+      const rawPeople: any[] = [];
+      for (let batch = 0; batch < pagesNeeded; batch += BATCH_SIZE) {
+        const batchPages = Array.from(
+          { length: Math.min(BATCH_SIZE, pagesNeeded - batch) },
+          (_, i) => batch + i + 1,
+        );
+        const batchResults = await Promise.allSettled(
+          batchPages.map((page) =>
+            this.client.get('/api/v1/company/people', {
+              params: { company_id: companyId, page },
+            }),
+          ),
+        );
+        for (const r of batchResults) {
+          if (r.status === 'fulfilled') {
+            const data = r.value.data?.data;
+            if (Array.isArray(data)) rawPeople.push(...data);
+          }
+        }
+        // Small delay between batches to avoid rate limit
+        if (batch + BATCH_SIZE < pagesNeeded) {
+          await new Promise((resolve) => setTimeout(resolve, 300));
+        }
+      }
 
       const rawPostsArray = Array.isArray(rawPosts) ? rawPosts : [];
       const postsMapped = rawPostsArray.map((p: any) => {
@@ -145,6 +167,77 @@ export class LinkedInScraper {
         `LinkedIn getCompany failed [${status}]: ${error.message} | ${data}`,
       );
       throw new Error('LINKEDIN_COMPANY_FETCH_FAILED');
+    }
+  }
+
+  /**
+   * Lightweight competitor profile fetch — only 1 API call (no posts).
+   * Used for competitor analysis to stay within 20 req/min rate limit.
+   * Engagement data will be zeros; the AI brand analysis uses company's own engagement for comparison.
+   */
+  async getCompanyProfile(slug: string): Promise<{
+    name: string;
+    logo: string;
+    followers: number;
+    employeeCount: number;
+    industry: string;
+    description: string;
+    website: string;
+    headquarters: string;
+    engagement: {
+      avgLikes: number;
+      avgComments: number;
+      avgReposts: number;
+      postCount: number;
+      engagementRate: number;
+      postsPerMonth: number;
+    };
+  }> {
+    // Retry logic: if profile call gets rate-limited (429), wait and retry once
+    const fetchProfile = async (attempt: number) => {
+      try {
+        const profileRes = await this.client.get('/api/v1/company/profile', {
+          params: { company: slug },
+        });
+        return profileRes.data?.data;
+      } catch (error) {
+        if (error.response?.status === 429 && attempt < 2) {
+          this.logger.warn(`Rate limited on profile for ${slug}, retrying in 3s...`);
+          await new Promise((resolve) => setTimeout(resolve, 3000));
+          return fetchProfile(attempt + 1);
+        }
+        throw error;
+      }
+    };
+
+    try {
+      const profile = await fetchProfile(1);
+      if (!profile) throw new Error('Empty profile response');
+
+      const hq = profile.headquarter;
+      const headquarters = hq
+        ? [hq.city, hq.country].filter(Boolean).join(', ')
+        : '';
+
+      // Profile-only: no posts fetch to save API calls (engagement stays at zeros)
+      const engagement = { avgLikes: 0, avgComments: 0, avgReposts: 0, postCount: 0, engagementRate: 0, postsPerMonth: 0 };
+
+      return {
+        name: profile.name ?? '',
+        logo: profile.logo?.[0]?.url ?? '',
+        followers: profile.follower_count ?? 0,
+        employeeCount: profile.employee_count ?? 0,
+        industry: profile.industries?.[0] ?? '',
+        description: profile.description ?? '',
+        website: profile.website_url ?? '',
+        headquarters,
+        engagement,
+      };
+    } catch (error) {
+      const status = error.response?.status;
+      const data = JSON.stringify(error.response?.data ?? {});
+      this.logger.warn(`LinkedIn getCompanyProfile failed for ${slug} [${status}]: ${error.message} | ${data}`);
+      throw new Error('LINKEDIN_COMPANY_PROFILE_FETCH_FAILED');
     }
   }
 
